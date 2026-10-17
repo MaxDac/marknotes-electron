@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (semver X.Y.Z, tagged as vX.Y.Z)
+        required: true
+        default: 0.1.0
+        type: string
+      prerelease:
+        description: Mark the GitHub Release as a pre-release
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Validate version and tag
+        id: version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version '$VERSION' is not a valid X.Y.Z semver."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$VERSION" > /dev/null; then
+            echo "::error::Tag v$VERSION already exists."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  checks:
+    name: Checks
+    needs: validate
+    uses: ./.github/workflows/checks.yml
+
+  package:
+    name: Package (${{ matrix.os }})
+    needs: [validate, checks]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: --linux AppImage deb
+          - os: windows-latest
+            target: --win nsis
+          - os: macos-latest
+            target: --mac dmg zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Set version
+        shell: bash
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+      - name: Build installers
+        shell: bash
+        env:
+          # Optional; without them Dropbox/OneDrive show as not configured.
+          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
+          MSAL_CLIENT_ID: ${{ secrets.MSAL_CLIENT_ID }}
+          # Optional code signing; electron-builder skips signing when unset.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+        run: npm run dist -- ${{ matrix.target }} --publish never
+      - name: Upload installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: installers-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: (cd dist && sha256sum * > SHA256SUMS)
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "v$VERSION" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "MarkNotes Desktop $VERSION" \
+            --generate-notes \
+            "${flags[@]}"

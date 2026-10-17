@@ -1,0 +1,82 @@
+name: Checks
+
+# Reusable checks shared by PR CI, Main CI and Release.
+# Script contract (package.json): lint, format:check, typecheck, test, e2e, build, dist.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (eslint, prettier, tsc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+
+  unit-tests:
+    name: Unit tests (vitest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  e2e:
+    name: E2E (Playwright Electron)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Electron needs a display on Linux runners.
+      - run: xvfb-run --auto-servernum npm run e2e
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
+
+  build:
+    name: Build (linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run dist -- --linux AppImage --publish never
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: marknotes-linux
+          path: release/*.AppImage
+          if-no-files-found: error
+          retention-days: 7
