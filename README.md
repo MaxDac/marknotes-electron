@@ -41,6 +41,12 @@ npm run e2e            # Playwright Electron E2E (run `npm run build` first)
 npm run dist           # installers via electron-builder, written to release/
 ```
 
+The `@electron/get` 3.x override uses `global-agent` 4 to avoid its deprecated `boolean` dependency
+and the vulnerable `roarr` / `sprintf-js` chain while retaining the proxy bootstrap API.
+The remaining deprecated `glob` 7, `inflight` and `rimraf` 2 packages come from electron-builder's
+ASAR and Squirrel tooling. They require upstream updates; forcing newer majors would break their APIs.
+Keep Vite 7 / React plugin 5 and TypeScript 6 until electron-vite and typescript-eslint support newer majors.
+
 To use Dropbox and OneDrive in `npm run dev`, set `DROPBOX_APP_KEY` and `MSAL_CLIENT_ID` as environment variables.
 Release builds read them at build time from the repository secrets (see below). Proton Drive needs no keys.
 
