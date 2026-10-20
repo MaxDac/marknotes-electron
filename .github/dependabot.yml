@@ -6,9 +6,9 @@ updates:
       interval: weekly
     groups:
       electron:
-        patterns: ["electron", "electron-*", "@electron/*"]
+        patterns: ['electron', 'electron-*', '@electron/*']
       codemirror:
-        patterns: ["@codemirror/*", "@lezer/*"]
+        patterns: ['@codemirror/*', '@lezer/*']
       dev-tooling:
         dependency-type: development
         update-types: [minor, patch]

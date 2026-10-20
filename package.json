@@ -1,0 +1,102 @@
+{
+  "name": "marknotes-desktop",
+  "productName": "MarkNotes",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop markdown notes with folders and sync to Proton Drive (unofficial), Dropbox and OneDrive",
+  "author": "MaxDac",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "homepage": "https://github.com/MaxDac/marknotes-electron",
+  "main": "out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "dist": "electron-vite build && electron-builder"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^7.1.0",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.14",
+    "@lezer/highlight": "^1.2.5",
+    "@protontech/drive-sdk": "^0.22.2",
+    "bcryptjs": "^3.0.3",
+    "highlight.js": "^11.12.0",
+    "idb": "^8.0.4",
+    "markdown-it": "^15.0.2",
+    "openpgp": "^6.3.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "fake-indexeddb": "^6.2.5",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^7.3.7",
+    "vitest": "^5.0.4"
+  },
+  "build": {
+    "appId": "io.github.maxdac.marknotes",
+    "productName": "MarkNotes",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "maintainer": "MaxDac"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    }
+  },
+  "allowScripts": {
+    "electron@44.7.0": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "electron-winstaller@5.4.0": true,
+    "core-js": false,
+    "exifreader": false
+  }
+}
