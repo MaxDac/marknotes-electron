@@ -8,9 +8,7 @@ and the same sync format, so all MarkNotes apps can share one drive folder.
 > MarkNotes is a personal, non-commercial project. It is not affiliated with or endorsed by Proton AG,
 > and it does not use any Proton logos or branding.
 
-> **Status:** bootstrap. The app is being implemented. See the planned features below.
-
-## Features (planned, parity with Android)
+## Features (parity with Android)
 
 - **Offline-first notes** stored in IndexedDB in the renderer, as a tree of folders and `.md` notes. You can create, open,
   rename, delete and move notes and folders, and a sidebar shows the whole folder tree.
@@ -43,6 +41,9 @@ npm run e2e            # Playwright Electron E2E (run `npm run build` first)
 npm run dist           # installers via electron-builder, written to release/
 ```
 
+To use Dropbox and OneDrive in `npm run dev`, set `DROPBOX_APP_KEY` and `MSAL_CLIENT_ID` as environment variables.
+Release builds read them at build time from the repository secrets (see below). Proton Drive needs no keys.
+
 ## CI/CD
 
 - `checks.yml` (reusable) has four required checks: "Lint (eslint, prettier, tsc)", "Unit tests (vitest)",
@@ -53,21 +54,26 @@ npm run dist           # installers via electron-builder, written to release/
 
 Repository secrets:
 
-| Secret | Purpose |
-| --- | --- |
-| `DROPBOX_APP_KEY` | Dropbox app key (PKCE, no secret). Optional; without it Dropbox shows as not configured. |
-| `MSAL_CLIENT_ID` | Microsoft Entra application (client) ID. Optional; without it OneDrive shows as not configured. |
-| `CSC_LINK`, `CSC_KEY_PASSWORD` | Optional code-signing certificate (base64 p12) and password. |
-| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Optional macOS notarization. |
+| Secret                                                     | Purpose                                                                                         |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `DROPBOX_APP_KEY`                                          | Dropbox app key (PKCE, no secret). Optional; without it Dropbox shows as not configured.        |
+| `MSAL_CLIENT_ID`                                           | Microsoft Entra application (client) ID. Optional; without it OneDrive shows as not configured. |
+| `CSC_LINK`, `CSC_KEY_PASSWORD`                             | Optional code-signing certificate (base64 p12) and password.                                    |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Optional macOS notarization.                                                                    |
 
 ### Provider registrations
+
+The desktop app reuses the Dropbox and Entra apps of the Android app. The full guide is in
+[MarkNotes `docs/cloud-providers.md`](https://github.com/MaxDac/MarkNotes/blob/main/docs/cloud-providers.md)
+(section 5 for desktop, section 6 for Proton Drive).
 
 - **Dropbox**: create an app in the [Dropbox App Console](https://www.dropbox.com/developers/apps) with "Full Dropbox"
   access and the scopes `account_info.read`, `files.metadata.read`, `files.content.read`, `files.content.write`.
   Add the loopback redirect URI `http://127.0.0.1/oauth/dropbox` (Dropbox ignores the port for loopback URIs).
 - **OneDrive**: register an app in [Microsoft Entra](https://entra.microsoft.com) for personal and organizational
   accounts, with the delegated permissions `Files.ReadWrite` and `User.Read`. Add a **Mobile and desktop applications**
-  platform with the redirect URI `http://localhost`.
+  platform with the redirect URI `http://localhost` (MSAL Node loopback on a random port). The app requests
+  `Files.ReadWrite User.Read offline_access`.
 
 ## Proton API usage rules
 
