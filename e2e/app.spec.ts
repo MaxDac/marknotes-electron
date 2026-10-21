@@ -16,6 +16,32 @@ async function launch(userData: string): Promise<{ app: ElectronApplication; pag
 
 const newUserData = () => mkdtempSync(join(tmpdir(), 'marknotes-e2e-'));
 
+test('offers real Dropbox and OneDrive connections without environment configuration', async () => {
+  const userData = newUserData();
+  const app = await electron.launch({
+    args: process.platform === 'linux' ? ['.', '--no-sandbox'] : ['.'],
+    env: {
+      ...process.env,
+      MARKNOTES_E2E: '0',
+      MARKNOTES_USER_DATA: userData,
+      ELECTRON_RENDERER_URL: '',
+      DROPBOX_APP_KEY: '',
+      MSAL_CLIENT_ID: '',
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    await expect(page.getByRole('heading', { name: 'MarkNotes' })).toBeVisible();
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await page.getByRole('button', { name: 'Add drive' }).click();
+    await expect(page.getByRole('button', { name: 'Dropbox', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'OneDrive', exact: true })).toBeEnabled();
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
+
 test('loads the real updater without checking for releases', async () => {
   const userData = newUserData();
   const { app } = await launch(userData);

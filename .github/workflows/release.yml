@@ -83,7 +83,7 @@ jobs:
       - name: Build installers
         shell: bash
         env:
-          # Optional; without them Dropbox/OneDrive show as not configured.
+          # Optional overrides of the built-in public OAuth registration IDs.
           DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
           MSAL_CLIENT_ID: ${{ secrets.MSAL_CLIENT_ID }}
           # Optional code signing; electron-builder skips signing when unset.
