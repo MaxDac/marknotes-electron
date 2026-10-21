@@ -16,8 +16,8 @@ const asar: typeof import('@electron/asar') = builderRequire('@electron/asar');
 
 interface Temp {
   track(enabled: boolean): void;
-  mkdirSync(prefix: string): string;
-  openSync(prefix: string): { path: string; fd: number };
+  mkdirSync(affixes: { dir: string; prefix: string }): string;
+  openSync(affixes: { dir: string; prefix: string }): { path: string; fd: number };
   cleanup(): Promise<{ files: number; dirs: number }>;
   cleanup(callback: (error: Error | null, counts: { files: number; dirs: number }) => void): void;
   cleanupSync(): { files: number; dirs: number };
@@ -116,39 +116,43 @@ describe('packaging dependency compatibility', () => {
     expect(asar.getRawHeader(archive).header.files).toHaveProperty('package.json');
   });
 
-  it('supports the existing universal merger, unpacked files and header integrity', async () => {
-    const root = fixture();
-    const source = join(root, 'source');
-    await mkdir(source);
-    await writeFile(join(source, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0' }));
-    await writeFile(join(source, 'fixture.node'), 'identical unpacked fixture');
-    const x64AsarPath = join(root, 'x64.asar');
-    const arm64AsarPath = join(root, 'arm64.asar');
-    const outputAsarPath = join(root, 'universal.asar');
-    await asar.createPackageWithOptions(source, x64AsarPath, { unpack: '*.node' });
-    await writeFile(join(source, 'arm64.txt'), 'architecture-specific fixture');
-    await asar.createPackageWithOptions(source, arm64AsarPath, { unpack: '*.node' });
-    await mergeASARs({ x64AsarPath, arm64AsarPath, outputAsarPath, singleArchFiles: 'arm64.txt' });
-    expect(asar.extractFile(outputAsarPath, 'arm64.txt').toString()).toBe('architecture-specific fixture');
-    expect(asar.statFile(outputAsarPath, 'fixture.node')).toHaveProperty('unpacked', true);
-    expect(generateAsarIntegrity(outputAsarPath)).toEqual({
-      algorithm: 'SHA256',
-      hash: createHash('sha256').update(asar.getRawHeader(outputAsarPath).headerString).digest('hex'),
-    });
-    const extracted = join(root, 'extracted');
-    asar.extractAll(outputAsarPath, extracted);
-    expect(await readFile(join(extracted, 'fixture.node'), 'utf8')).toBe('identical unpacked fixture');
-  });
+  // The macOS universal merger assumes POSIX archive paths and is not supported on Windows.
+  it.skipIf(process.platform === 'win32')(
+    'supports the existing universal merger, unpacked files and header integrity',
+    async () => {
+      const root = fixture();
+      const source = join(root, 'source');
+      await mkdir(source);
+      await writeFile(join(source, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0' }));
+      await writeFile(join(source, 'fixture.node'), 'identical unpacked fixture');
+      const x64AsarPath = join(root, 'x64.asar');
+      const arm64AsarPath = join(root, 'arm64.asar');
+      const outputAsarPath = join(root, 'universal.asar');
+      await asar.createPackageWithOptions(source, x64AsarPath, { unpack: '*.node' });
+      await writeFile(join(source, 'arm64.txt'), 'architecture-specific fixture');
+      await asar.createPackageWithOptions(source, arm64AsarPath, { unpack: '*.node' });
+      await mergeASARs({ x64AsarPath, arm64AsarPath, outputAsarPath, singleArchFiles: 'arm64.txt' });
+      expect(asar.extractFile(outputAsarPath, 'arm64.txt').toString()).toBe('architecture-specific fixture');
+      expect(asar.statFile(outputAsarPath, 'fixture.node')).toHaveProperty('unpacked', true);
+      expect(generateAsarIntegrity(outputAsarPath)).toEqual({
+        algorithm: 'SHA256',
+        hash: createHash('sha256').update(asar.getRawHeader(outputAsarPath).headerString).digest('hex'),
+      });
+      const extracted = join(root, 'extracted');
+      asar.extractAll(outputAsarPath, extracted);
+      expect(await readFile(join(extracted, 'fixture.node'), 'utf8')).toBe('identical unpacked fixture');
+    },
+  );
 
   it.each(['sync', 'promise', 'callback'] as const)(
     'preserves temp %s cleanup with modern rimraf',
     async (mode) => {
       temp.track(true);
       const root = fixture();
-      const directory = temp.mkdirSync(join(root, 'directory-'));
+      const directory = temp.mkdirSync({ dir: root, prefix: 'directory-' });
       await mkdir(join(directory, 'nested'));
       await writeFile(join(directory, 'nested', 'file'), 'contents');
-      const file = temp.openSync(join(root, 'file-'));
+      const file = temp.openSync({ dir: root, prefix: 'file-' });
       writeFileSync(file.fd, 'contents');
       closeSync(file.fd);
       const counts =

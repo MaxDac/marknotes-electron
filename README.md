@@ -60,7 +60,8 @@ Stable electron-builder 26.18.0 and electron-updater 6.8.11 still need these ver
 
 - ASAR 4.3.1 replaces ASAR 3 beneath app-builder-lib, its universal helper and electron-winstaller, removing
   `glob` 7 and `inflight`. Tests cover builder stream packaging, installer extraction, universal archive merging,
-  unpacked files and header integrity on Node 24.
+  unpacked files and header integrity on Node 24. The macOS universal-merger test runs on macOS/Linux,
+  not Windows; installer extraction and temporary-file cleanup are tested on all three platforms.
 - electron-updater's `lodash.isequal` import resolves to `fast-deep-equal` 3.1.3 through an npm alias, replacing
   the deprecated implementation. Its only call sites compare downloaded update metadata; tests cover nested
   equality, changed metadata, missing files and persisted-cache SHA-512 verification.
