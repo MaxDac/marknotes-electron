@@ -120,6 +120,7 @@ Proton Drive needs no keys.
 | `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Optional macOS notarization.                                                       |
 
 Without the signing secrets the installers are unsigned: Windows SmartScreen and macOS Gatekeeper warn on first launch.
+The release workflow unsets an empty `CSC_LINK` so macOS packaging does not treat it as a certificate file path.
 
 ### Auto-update
 
