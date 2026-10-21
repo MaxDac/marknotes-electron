@@ -75,8 +75,13 @@ passes compatibility tests. Keep builder/updater pinned until those fixes have b
 blanket major overrides or suppress installation warnings. Regenerate only the lockfile with
 `npm install --package-lock-only --ignore-scripts`, then use `npm ci` to perform a real patched installation.
 
-To use Dropbox and OneDrive in `npm run dev`, set `DROPBOX_APP_KEY` and `MSAL_CLIENT_ID` as environment variables.
-Release builds read them at build time from the repository secrets (see below). Proton Drive needs no keys.
+Dropbox and OneDrive use the built-in public OAuth registrations shared with Android, so both are available
+in local development and packaged builds without extra configuration. These identifiers are not client secrets;
+sign-in still requires the user's consent and the desktop redirect registrations described below.
+To use different registrations, set `DROPBOX_APP_KEY` and `MSAL_CLIENT_ID` as environment variables.
+Runtime environment values take precedence over build-time values; release builds read optional build-time overrides
+from the repository secrets (see below), then fall back to the built-in IDs. Blank values also use the defaults.
+Proton Drive needs no keys.
 
 ## CI/CD
 
@@ -107,12 +112,12 @@ Release builds read them at build time from the repository secrets (see below). 
 
 ### Repository secrets
 
-| Secret                                                     | Purpose                                                                                         |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `DROPBOX_APP_KEY`                                          | Dropbox app key (PKCE, no secret). Optional; without it Dropbox shows as not configured.        |
-| `MSAL_CLIENT_ID`                                           | Microsoft Entra application (client) ID. Optional; without it OneDrive shows as not configured. |
-| `CSC_LINK`, `CSC_KEY_PASSWORD`                             | Optional code-signing certificate (base64 p12) and password.                                    |
-| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Optional macOS notarization.                                                                    |
+| Secret                                                     | Purpose                                                                            |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `DROPBOX_APP_KEY`                                          | Optional override of the built-in public Dropbox app key (PKCE, no client secret). |
+| `MSAL_CLIENT_ID`                                           | Optional override of the built-in public Microsoft Entra application (client) ID.  |
+| `CSC_LINK`, `CSC_KEY_PASSWORD`                             | Optional code-signing certificate (base64 p12) and password.                       |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Optional macOS notarization.                                                       |
 
 Without the signing secrets the installers are unsigned: Windows SmartScreen and macOS Gatekeeper warn on first launch.
 

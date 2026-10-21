@@ -10,7 +10,7 @@ export interface ConnectorDeps {
   openExternal: OpenExternal;
 }
 
-/** The real cloud providers. Dropbox and OneDrive need app registrations injected at build time. */
+/** The real cloud providers, using the public registrations from config. */
 export function createConnectors(deps: ConnectorDeps): Record<DriveProvider, DriveConnector> {
   return {
     proton: new ProtonConnector({ vault: deps.vault }),
