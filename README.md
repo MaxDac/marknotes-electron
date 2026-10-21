@@ -27,10 +27,12 @@ Out of scope: search, tags, attachments, background sync, local encryption.
 
 ## Development
 
-Requirements: Node.js (version in `.node-version`).
+Requirements: Node.js (version in `.node-version`) and Git (used to apply the pinned build-dependency patch).
 
 ```sh
 npm ci
+npm run deps:check     # no deprecated packages anywhere in the lockfile
+npm run deps:audit     # zero known vulnerabilities, including dev/optional/peer dependencies
 npm run dev            # start the app with hot reload
 npm run lint           # eslint
 npm run format:check   # prettier
@@ -43,21 +45,46 @@ npm run dist           # installers via electron-builder, written to release/
 
 The `@electron/get` 3.x override uses `global-agent` 4 to avoid its deprecated `boolean` dependency
 and the vulnerable `roarr` / `sprintf-js` chain while retaining the proxy bootstrap API.
-The remaining deprecated `glob` 7, `inflight` and `rimraf` 2 packages come from electron-builder's
-ASAR and Squirrel tooling. They require upstream updates; forcing newer majors would break their APIs.
 Keep Vite 7 / React plugin 5 and TypeScript 6 until electron-vite and typescript-eslint support newer majors.
+
+### Dependency policy
+
+The complete lockfile must contain no deprecated packages and the full npm audit must report zero known
+vulnerabilities at every severity. Development, optional, peer and platform-specific packages are included.
+Audit/network errors fail the check; advisories are not ignored. This establishes the absence of **known npm
+advisories at check time**, not a guarantee against undiscovered vulnerabilities or vendor advisories outside npm's data.
+The deprecation check reads lockfile metadata; recheck registry metadata when updating dependencies, because a package
+can be deprecated after the lockfile was generated.
+
+Stable electron-builder 26.18.0 and electron-updater 6.8.11 still need these version-pinned compatibility fixes:
+
+- ASAR 4.3.1 replaces ASAR 3 beneath app-builder-lib, its universal helper and electron-winstaller, removing
+  `glob` 7 and `inflight`. Tests cover builder stream packaging, installer extraction, universal archive merging,
+  unpacked files and header integrity on Node 24. The macOS universal-merger test runs on macOS/Linux,
+  not Windows; installer extraction and temporary-file cleanup are tested on all three platforms.
+- electron-updater's `lodash.isequal` import resolves to `fast-deep-equal` 3.1.3 through an npm alias, replacing
+  the deprecated implementation. Its only call sites compare downloaded update metadata; tests cover nested
+  equality, changed metadata, missing files and persisted-cache SHA-512 verification.
+- `temp` 0.9.4 uses rimraf 6.1.3 instead of rimraf 2. The tracked `patches/temp+0.9.4.patch` adapts its imports,
+  retry options and promise-to-callback handling. `npm ci` applies it using Git through `postinstall`, failing if
+  the patch no longer applies; repeat runs are idempotent. Runtime-only installs omit this build-only patch.
+  Tests cover synchronous, promise and callback cleanup.
+
+Remove each override/patch when a stable parent release eliminates the corresponding deprecated dependency and
+passes compatibility tests. Keep builder/updater pinned until those fixes have been re-evaluated. Do not use
+blanket major overrides or suppress installation warnings. Regenerate only the lockfile with
+`npm install --package-lock-only --ignore-scripts`, then use `npm ci` to perform a real patched installation.
 
 To use Dropbox and OneDrive in `npm run dev`, set `DROPBOX_APP_KEY` and `MSAL_CLIENT_ID` as environment variables.
 Release builds read them at build time from the repository secrets (see below). Proton Drive needs no keys.
 
 ## CI/CD
 
-- `checks.yml` (reusable) has four required checks: "Lint (eslint, prettier, tsc)", "Unit tests (vitest)",
-  "E2E (Playwright Electron)" and "Build (linux)". `pr-ci.yml` runs them on pull requests and `main-ci.yml` runs them on `main`.
-- `pr-ci.yml` also runs "Dependency review" (fails on new dependencies with high or critical advisories) and
+- `checks.yml` (reusable) checks dependencies (deprecations and a full all-severity audit), lint/format/types,
+  unit tests, Electron E2E, Linux AppImage/deb packaging, and unsigned Windows NSIS/macOS dmg/zip packaging
+  (both macOS architectures). PR, main and release workflows all inherit these checks; release packaging waits for them.
+- `pr-ci.yml` also runs "Dependency review" (fails on new dependencies with low or higher advisories) and
   "Lint workflows (actionlint)".
-- `main-ci.yml` also runs unsigned Windows and macOS packaging smoke builds ("Package smoke (windows-latest)",
-  "Package smoke (macos-latest)") after the checks.
 - `codeql.yml` runs CodeQL ("CodeQL (javascript-typescript)", "CodeQL (actions)") on pull requests, on `main` and weekly.
 - `dependabot-automerge.yml` enables squash auto-merge on Dependabot patch and minor updates. Major updates and the
   `electron` group always need a manual review. It needs **Allow auto-merge** in the repository settings and only merges

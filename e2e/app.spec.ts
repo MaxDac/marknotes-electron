@@ -1,5 +1,5 @@
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,6 +15,29 @@ async function launch(userData: string): Promise<{ app: ElectronApplication; pag
 }
 
 const newUserData = () => mkdtempSync(join(tmpdir(), 'marknotes-e2e-'));
+
+test('loads the real updater without checking for releases', async () => {
+  const userData = newUserData();
+  const { app } = await launch(userData);
+  try {
+    expect(
+      await app.evaluate(({ app }) => {
+        const mod: typeof import('electron-updater') = process
+          .getBuiltinModule('module')
+          .createRequire(`${app.getAppPath()}/package.json`)('electron-updater');
+        const updater = mod.autoUpdater;
+        return {
+          check: typeof updater.checkForUpdates,
+          install: typeof updater.quitAndInstall,
+          download: typeof updater.downloadUpdate,
+        };
+      }),
+    ).toEqual({ check: 'function', install: 'function', download: 'function' });
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
 
 async function createNote(page: Page, name: string) {
   await page.getByTestId('new-note').click();
