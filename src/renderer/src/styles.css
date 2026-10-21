@@ -129,6 +129,10 @@ textarea:focus {
   gap: 8px;
   align-items: center;
 }
+.update-banner {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
 .main {
   display: flex;
   flex: 1;

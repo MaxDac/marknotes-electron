@@ -5,7 +5,9 @@ import type { DriveProvider } from '../shared/types';
 import { FakeConnector } from './connectors/fake';
 import { createConnectors } from './connectors/registry';
 import type { DriveConnector } from './connectors/types';
+import { PRERELEASE_BUILD } from './config';
 import { DriveService } from './driveService';
+import { loadElectronUpdater, UpdateController } from './updater';
 import { FileSecretVault } from './vault';
 
 const e2e = process.env.MARKNOTES_E2E === '1';
@@ -50,7 +52,24 @@ function handle(channel: string, fn: (...args: never[]) => unknown) {
   });
 }
 
-function registerIpc(service: DriveService) {
+function createUpdater(): UpdateController {
+  return new UpdateController(
+    {
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      version: app.getVersion(),
+      appImage: process.env.APPIMAGE,
+      prereleaseBuild: PRERELEASE_BUILD,
+      e2e,
+    },
+    loadElectronUpdater,
+    (status) => {
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send('update:changed', status);
+    },
+  );
+}
+
+function registerIpc(service: DriveService, updater: UpdateController) {
   handle('app:deviceId', () => service.deviceId());
   handle('app:openExternal', (url: string) => openExternal(url));
   handle('drives:providers', () => service.providers());
@@ -64,6 +83,8 @@ function registerIpc(service: DriveService) {
   handle('drives:discardSignIn', (id: string) => service.discardSignIn(id));
   handle('drives:remove', (id: string) => service.removeDrive(id));
   handle('remote:op', (id: string, op: RemoteOp) => service.remote(id, op));
+  handle('update:status', () => updater.status());
+  handle('update:install', () => updater.install());
   if (e2e) {
     handle('test:remote', async (driveId: string, action: string, path?: string, text?: string) => {
       const drive = (await service.drives()).find((d) => d.id === driveId);
@@ -118,8 +139,10 @@ if (!e2e && !app.requestSingleInstanceLock()) {
     }
   });
   void app.whenReady().then(() => {
-    registerIpc(createService());
+    const updater = createUpdater();
+    registerIpc(createService(), updater);
     createWindow();
+    void updater.start();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
