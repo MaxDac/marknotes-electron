@@ -95,7 +95,11 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
           # Pre-release builds keep following pre-releases when auto-updating.
           MARKNOTES_PRERELEASE: ${{ inputs.prerelease }}
-        run: npm run dist -- ${{ matrix.target }} --publish never
+        run: |
+          if [ -z "$CSC_LINK" ]; then
+            unset CSC_LINK
+          fi
+          npm run dist -- ${{ matrix.target }} --publish never
       - name: Upload installers
         uses: actions/upload-artifact@v7
         with:
