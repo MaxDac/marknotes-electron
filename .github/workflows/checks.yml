@@ -1,7 +1,7 @@
 name: Checks
 
 # Reusable checks shared by PR CI, Main CI and Release.
-# Script contract (package.json): lint, format:check, typecheck, test, e2e, build, dist.
+# Script contract (package.json): deps:check, deps:audit, lint, format:check, typecheck, test, e2e, build, dist.
 on:
   workflow_call:
 
@@ -9,6 +9,20 @@ permissions:
   contents: read
 
 jobs:
+  dependencies:
+    name: Dependencies (deprecations, audit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      # These checks use only Node and npm, and cover all lockfile platforms.
+      - run: npm run deps:check
+      - run: npm run deps:audit
+
   lint:
     name: Lint (eslint, prettier, tsc)
     runs-on: ubuntu-24.04
@@ -81,11 +95,45 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
-      - run: npm run dist -- --linux AppImage --publish never
-      - name: Upload AppImage
+      - run: npm run dist -- --linux AppImage deb --publish never
+      - name: Upload Linux installers
         uses: actions/upload-artifact@v7
         with:
           name: marknotes-linux
-          path: release/*.AppImage
+          path: |
+            release/*.AppImage
+            release/*.deb
           if-no-files-found: error
           retention-days: 7
+
+  package-smoke:
+    name: Package smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win nsis
+          - os: macos-latest
+            target: --mac dmg zip --x64 --arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm test -- test/dependency-compatibility.test.ts
+      - name: Build installers (unsigned)
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist -- ${{ matrix.target }} --publish never
+      - name: Verify macOS update metadata
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          grep -q -- '-arm64' release/latest-mac.yml
+          grep -q -- '-x64' release/latest-mac.yml

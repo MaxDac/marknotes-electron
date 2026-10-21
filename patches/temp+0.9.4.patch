@@ -1,0 +1,53 @@
+diff --git a/node_modules/temp/lib/temp.js b/node_modules/temp/lib/temp.js
+index 28a17f7..b631800 100644
+--- a/node_modules/temp/lib/temp.js
++++ b/node_modules/temp/lib/temp.js
+@@ -4,11 +4,9 @@ let cnst = require('constants');
+ 
+ let os         = require('os');
+-let rimraf     = require('rimraf');
++let { rimraf, rimrafSync } = require('rimraf');
+ let mkdirp     = require('mkdirp');
+ let osTmpdir   = require('os').tmpdir();
+ 
+-const rimrafSync = rimraf.sync;
+-
+ //== helpers
+ //
+ let dir = path.resolve(os.tmpdir());
+@@ -123,7 +123,7 @@ function cleanupFilesSync() {
+   var count = 0;
+   var toDelete;
+   while ((toDelete = filesToDelete.shift()) !== undefined) {
+-    rimrafSync(toDelete, { maxBusyTries: 6 });
++    rimrafSync(toDelete, { maxRetries: 6 });
+     count++;
+   }
+   return count;
+@@ -165,7 +165,7 @@ function cleanupFiles(callback) {
+     }
+   };
+   while ((toDelete = filesToDelete.shift()) !== undefined) {
+-    rimraf(toDelete, { maxBusyTries: 6 }, rimrafCallback);
++    rimraf(toDelete, { maxRetries: 6 }).then(() => rimrafCallback(), rimrafCallback);
+   }
+   return promise;
+ }
+@@ -177,7 +177,7 @@ function cleanupDirsSync() {
+   var count = 0;
+   var toDelete;
+   while ((toDelete = dirsToDelete.shift()) !== undefined) {
+-    rimrafSync(toDelete, { maxBusyTries: 6 });
++    rimrafSync(toDelete, { maxRetries: 6 });
+     count++;
+   }
+   return count;
+@@ -219,7 +219,7 @@ function cleanupDirs(callback) {
+     }
+   };
+   while ((toDelete = dirsToDelete.shift()) !== undefined) {
+-    rimraf(toDelete, { maxBusyTries: 6 }, rimrafCallback);
++    rimraf(toDelete, { maxRetries: 6 }).then(() => rimrafCallback(), rimrafCallback);
+   }
+   return promise;
+ }
