@@ -19,6 +19,15 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      # Private feeds in the lockfile break Dependabot and fresh clones.
+      - name: Check lockfile uses registry.npmjs.org
+        run: |
+          bad=$(grep -oE '"resolved": *"[^"]*"' package-lock.json | grep -vE '"resolved": *"https://registry\.npmjs\.org/' || true)
+          if [ -n "$bad" ]; then
+            echo "::error file=package-lock.json::package-lock.json has resolved URLs outside https://registry.npmjs.org/. Regenerate it with the project .npmrc."
+            echo "$bad"
+            exit 1
+          fi
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
