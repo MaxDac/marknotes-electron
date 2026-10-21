@@ -35,6 +35,16 @@ export type RemoteOp =
   | { op: 'readManifest' }
   | { op: 'writeManifest'; bytes: Uint8Array };
 
+/** Auto-update state, pushed from the main process on every change. */
+export type UpdateStatus =
+  | { state: 'disabled'; reason: string }
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'upToDate' }
+  | { state: 'downloading'; version: string; percent: number }
+  | { state: 'downloaded'; version: string }
+  | { state: 'error'; message: string };
+
 /** API exposed by the preload script as `window.marknotes`. */
 export interface MarkNotesApi {
   platform: string;
@@ -51,6 +61,11 @@ export interface MarkNotesApi {
   removeDrive(driveId: string): Promise<Result<void>>;
   remote(driveId: string, op: RemoteOp): Promise<Result<unknown>>;
   openExternal(url: string): Promise<Result<void>>;
+  updateStatus(): Promise<Result<UpdateStatus>>;
+  /** Subscribes to update status changes; returns an unsubscribe function. */
+  onUpdateStatus(listener: (status: UpdateStatus) => void): () => void;
+  /** Quits and installs a downloaded update. */
+  installUpdate(): Promise<Result<void>>;
   /** Only available in end-to-end test builds (MARKNOTES_E2E=1). */
   testRemote?(
     driveId: string,

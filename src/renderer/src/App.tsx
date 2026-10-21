@@ -9,6 +9,7 @@ import { Conflicts } from './ui/Conflicts';
 import { AppContext, errorMessage, type AppServices } from './ui/context';
 import { SettingsPage } from './ui/SettingsPage';
 import { applyTheme, type ThemeColor, type ThemeMode } from './ui/theme';
+import { UpdateBanner } from './ui/UpdateBanner';
 
 export type Page = 'notes' | 'settings' | 'addDrive' | 'conflicts';
 
@@ -94,6 +95,7 @@ export function App() {
   return (
     <AppContext.Provider value={services}>
       <div className="app">
+        <UpdateBanner />
         <Browser navigate={setPage} hidden={page !== 'notes'} />
         {page === 'settings' && <SettingsPage navigate={setPage} />}
         {page === 'addDrive' && <AddDrive onDone={() => setPage('settings')} />}

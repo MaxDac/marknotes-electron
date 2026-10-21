@@ -15,3 +15,28 @@ jobs:
   checks:
     name: Checks
     uses: ./.github/workflows/checks.yml
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  actionlint:
+    name: Lint workflows (actionlint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      # The image bundles shellcheck, so run: scripts are checked too.
+      - uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color

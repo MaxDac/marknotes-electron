@@ -63,8 +63,9 @@ jobs:
             target: --linux AppImage deb
           - os: windows-latest
             target: --win nsis
+          # One invocation for both archs so latest-mac.yml lists both zips.
           - os: macos-latest
-            target: --mac dmg zip
+            target: --mac dmg zip --x64 --arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
@@ -92,6 +93,8 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+          # Pre-release builds keep following pre-releases when auto-updating.
+          MARKNOTES_PRERELEASE: ${{ inputs.prerelease }}
         run: npm run dist -- ${{ matrix.target }} --publish never
       - name: Upload installers
         uses: actions/upload-artifact@v7
@@ -103,6 +106,8 @@ jobs:
             release/*.exe
             release/*.dmg
             release/*.zip
+            release/*.blockmap
+            release/latest*.yml
           if-no-files-found: error
           retention-days: 7
 
@@ -120,8 +125,30 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           pattern: installers-*
-          path: dist
-          merge-multiple: true
+          path: artifacts
+      # Flatten per-OS artifacts, failing on name clashes (e.g. two latest*.yml overwriting each other).
+      - name: Collect release assets
+        run: |
+          mkdir dist
+          find artifacts -type f -print0 | while IFS= read -r -d '' f; do
+            name=$(basename "$f")
+            if [ -e "dist/$name" ]; then
+              echo "::error::Duplicate release asset $name"
+              exit 1
+            fi
+            cp "$f" "dist/$name"
+          done
+          for f in latest.yml latest-mac.yml latest-linux.yml; do
+            if [ ! -f "dist/$f" ]; then
+              echo "::error::Missing auto-update metadata $f"
+              exit 1
+            fi
+          done
+          if ! grep -q -- '-arm64' dist/latest-mac.yml || ! grep -q -- '-x64' dist/latest-mac.yml; then
+            echo "::error::latest-mac.yml must list both arm64 and x64 builds"
+            exit 1
+          fi
+          ls -l dist
       - name: Checksums
         run: (cd dist && sha256sum * > SHA256SUMS)
       - name: Create GitHub Release

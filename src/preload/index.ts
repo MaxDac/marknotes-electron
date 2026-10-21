@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { MarkNotesApi } from './api';
+import type { MarkNotesApi, UpdateStatus } from './api';
 
 const call =
   (channel: string) =>
@@ -21,6 +21,13 @@ const api: MarkNotesApi = {
   removeDrive: call('drives:remove') as MarkNotesApi['removeDrive'],
   remote: call('remote:op') as MarkNotesApi['remote'],
   openExternal: call('app:openExternal') as MarkNotesApi['openExternal'],
+  updateStatus: call('update:status') as MarkNotesApi['updateStatus'],
+  onUpdateStatus(listener) {
+    const handler = (_event: unknown, status: UpdateStatus) => listener(status);
+    ipcRenderer.on('update:changed', handler);
+    return () => ipcRenderer.removeListener('update:changed', handler);
+  },
+  installUpdate: call('update:install') as MarkNotesApi['installUpdate'],
 };
 
 if (process.env.MARKNOTES_E2E === '1') {

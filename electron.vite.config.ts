@@ -4,6 +4,7 @@ import { defineConfig } from 'electron-vite';
 const secrets = {
   __DROPBOX_APP_KEY__: JSON.stringify(process.env.DROPBOX_APP_KEY ?? ''),
   __MSAL_CLIENT_ID__: JSON.stringify(process.env.MSAL_CLIENT_ID ?? ''),
+  __MARKNOTES_PRERELEASE__: JSON.stringify(process.env.MARKNOTES_PRERELEASE === 'true'),
 };
 
 export default defineConfig({

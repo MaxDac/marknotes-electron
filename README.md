@@ -54,11 +54,31 @@ Release builds read them at build time from the repository secrets (see below). 
 
 - `checks.yml` (reusable) has four required checks: "Lint (eslint, prettier, tsc)", "Unit tests (vitest)",
   "E2E (Playwright Electron)" and "Build (linux)". `pr-ci.yml` runs them on pull requests and `main-ci.yml` runs them on `main`.
-- `release.yml` is started manually (Actions → Release → Run workflow) with a `version` (`X.Y.Z`) and a `prerelease` flag.
-  It runs the checks, builds installers on Linux (AppImage, deb), Windows (NSIS) and macOS (dmg, zip), and publishes a
-  `vX.Y.Z` GitHub Release with the installers and `SHA256SUMS`.
+- `pr-ci.yml` also runs "Dependency review" (fails on new dependencies with high or critical advisories) and
+  "Lint workflows (actionlint)".
+- `main-ci.yml` also runs unsigned Windows and macOS packaging smoke builds ("Package smoke (windows-latest)",
+  "Package smoke (macos-latest)") after the checks.
+- `codeql.yml` runs CodeQL ("CodeQL (javascript-typescript)", "CodeQL (actions)") on pull requests, on `main` and weekly.
+- `dependabot-automerge.yml` enables squash auto-merge on Dependabot patch and minor updates. Major updates and the
+  `electron` group always need a manual review. It needs **Allow auto-merge** in the repository settings and only merges
+  once the required checks pass.
 
-Repository secrets:
+## Release
+
+`release.yml` publishes the desktop installers as a GitHub Release.
+
+### Cutting a release
+
+1. Make sure `main` is green.
+2. Go to Actions → Release → Run workflow, enter the `version` (`X.Y.Z`, tagged `vX.Y.Z`) and choose `prerelease`.
+3. The workflow validates the version, runs the checks, builds the installers on Linux (AppImage, deb), Windows (NSIS)
+   and macOS (dmg and zip, for both Apple silicon `arm64` and Intel `x64`), and creates the `vX.Y.Z` release from the
+   workflow commit. Release assets: the installers, the auto-update metadata (`latest.yml`, `latest-mac.yml`,
+   `latest-linux.yml`), the `*.blockmap` files for differential downloads, and `SHA256SUMS`.
+
+`package.json` is not bumped in git; the workflow sets the version only for the build.
+
+### Repository secrets
 
 | Secret                                                     | Purpose                                                                                         |
 | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
@@ -66,6 +86,32 @@ Repository secrets:
 | `MSAL_CLIENT_ID`                                           | Microsoft Entra application (client) ID. Optional; without it OneDrive shows as not configured. |
 | `CSC_LINK`, `CSC_KEY_PASSWORD`                             | Optional code-signing certificate (base64 p12) and password.                                    |
 | `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Optional macOS notarization.                                                                    |
+
+Without the signing secrets the installers are unsigned: Windows SmartScreen and macOS Gatekeeper warn on first launch.
+
+### Auto-update
+
+Packaged apps use [electron-updater](https://www.electron.build/auto-update) with the GitHub Releases of this repository.
+On startup the app checks for a newer release once, downloads it in the background, and shows a
+**Restart to update** banner when it is ready. If you choose **Later**, the update is installed when you quit the app.
+Development, E2E and unpackaged runs never check for updates.
+
+- Stable builds only see stable releases. Builds published with `prerelease` (or with a pre-release version) also
+  receive pre-releases.
+- Windows (NSIS) and Linux AppImage builds update themselves.
+- The Linux `.deb` package cannot update itself; install new versions from the Releases page.
+- **macOS only installs updates for signed and notarized builds** (Squirrel.Mac checks the code signature). Until the
+  `CSC_LINK`/`APPLE_*` secrets are set, macOS users must download new versions manually; the failed update is ignored.
+
+### Rollback
+
+A bad release can be withdrawn without a new build:
+
+1. Delete the release and its tag: `gh release delete vX.Y.Z --cleanup-tag --yes`.
+2. If the previous release is not marked as latest, mark it: `gh release edit vX.Y.W --latest`
+   (stable clients follow the release marked **Latest**).
+3. Clients that already updated keep the bad version, as updates never downgrade. Publish a fixed `X.Y.(Z+1)` to move
+   them forward.
 
 ### Provider registrations
 
