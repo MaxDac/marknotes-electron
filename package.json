@@ -14,7 +14,7 @@
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
-    "postinstall": "node scripts/apply-dependency-patches.ts",
+    "postinstall": "node scripts/apply-dependency-patches.ts && node scripts/install-electron.ts",
     "deps:check": "node scripts/check-dependencies.ts",
     "deps:audit": "node scripts/check-dependencies.ts audit",
     "dev": "electron-vite dev",
