@@ -2,7 +2,7 @@ import { generateNoteId, isNoteId, splitFrontMatter, withNoteId } from './frontM
 import type { NoteStore } from './noteStore';
 import * as P from './paths';
 
-/** Links between notes are written `[Note title](marknotes:<id>)`. See docs/note-format.md. */
+/** Links between notes are written `[Note title](marknotes:<id>)`. See spec/note-format.md. */
 export const NOTE_LINK_SCHEME = 'marknotes:';
 
 export interface IndexedNote {

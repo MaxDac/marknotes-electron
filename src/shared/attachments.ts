@@ -4,7 +4,7 @@ import * as P from './paths';
 
 /**
  * Images are stored at the root of the notes folder in `attachments/<sha256>.<ext>`, named after the hash of
- * their final bytes, and referenced from notes with a root-relative path. See docs/note-format.md.
+ * their final bytes, and referenced from notes with a root-relative path. See spec/note-format.md.
  */
 export const ATTACHMENTS_FOLDER = 'attachments';
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;

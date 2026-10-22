@@ -30,13 +30,16 @@ and the same sync format, so all MarkNotes apps can share one drive folder.
 - **Dropbox / OneDrive login**: OAuth 2 PKCE (Dropbox) and MSAL (OneDrive) in the system browser, with a loopback redirect.
 - Tokens are encrypted with Electron `safeStorage` (OS keychain).
 
-The file format shared with the Android and web apps is described in [docs/note-format.md](docs/note-format.md).
+The file format shared with the Android and web apps is specified in [marknotes-spec](https://github.com/MaxDac/marknotes-spec)
+(`spec/` submodule, [spec/note-format.md](spec/note-format.md)); its golden fixtures run against this app in CI.
+See [AGENTS.md](AGENTS.md) for the cross-app parity rules.
 
 Out of scope: search, tags, background sync, local encryption.
 
 ## Development
 
 Requirements: Node.js (version in `.node-version`) and Git (used to apply the pinned build-dependency patch).
+Clone with `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone, to fetch `spec/`.
 
 ```sh
 npm ci
@@ -47,6 +50,7 @@ npm run lint           # eslint
 npm run format:check   # prettier
 npm run typecheck      # tsc
 npm test               # vitest unit tests
+npm run test:parity    # marknotes-spec golden fixtures (needs the spec/ submodule)
 npm run build          # production bundles (electron-vite)
 npm run e2e            # Playwright Electron E2E (run `npm run build` first)
 npm run dist           # installers via electron-builder, written to release/
@@ -95,10 +99,14 @@ Proton Drive needs no keys.
 ## CI/CD
 
 - `checks.yml` (reusable) checks dependencies (deprecations and a full all-severity audit), lint/format/types,
-  unit tests, Electron E2E, Linux AppImage/deb packaging, and unsigned Windows NSIS/macOS dmg/zip packaging
-  (both macOS architectures). PR, main and release workflows all inherit these checks; release packaging waits for them.
-- `pr-ci.yml` also runs "Dependency review" (fails on new dependencies with low or higher advisories) and
-  "Lint workflows (actionlint)".
+  unit tests, the marknotes-spec parity fixtures ("Parity (marknotes-spec fixtures)"), Electron E2E, Linux AppImage/deb
+  packaging, and unsigned Windows NSIS/macOS dmg/zip packaging (both macOS architectures). PR, main and release
+  workflows all inherit these checks; release packaging waits for them.
+- "Build (linux)" runs `scripts/linux-package-smoke.sh`: it checks the deb metadata (maintainer, package name,
+  desktop entry, icons, `chrome-sandbox` permissions) and `latest-linux.yml`, installs the deb and launches it under
+  Xvfb with the Chromium sandbox, removes it, then extracts the AppImage and launches it too.
+- `pr-ci.yml` also runs "Dependency review" (fails on new dependencies with high or critical advisories, as in the
+  Android and web repos) and "Lint workflows (actionlint)".
 - `codeql.yml` runs CodeQL ("CodeQL (javascript-typescript)", "CodeQL (actions)") on pull requests, on `main` and weekly.
 - `dependabot-automerge.yml` enables squash auto-merge on Dependabot patch and minor updates. Major updates and the
   `electron` group always need a manual review. It needs **Allow auto-merge** in the repository settings and only merges
@@ -115,9 +123,20 @@ Proton Drive needs no keys.
 3. The workflow validates the version, runs the checks, builds the installers on Linux (AppImage, deb), Windows (NSIS)
    and macOS (dmg and zip, for both Apple silicon `arm64` and Intel `x64`), and creates the `vX.Y.Z` release from the
    workflow commit. Release assets: the installers, the auto-update metadata (`latest.yml`, `latest-mac.yml`,
-   `latest-linux.yml`), the `*.blockmap` files for differential downloads, and `SHA256SUMS`.
+   `latest-linux.yml`), the `*.blockmap` files for differential downloads, and `SHA256SUMS`. The workflow summary
+   lists the version, pre-release flag, signing status and every asset with its SHA-256.
 
 `package.json` is not bumped in git; the workflow sets the version only for the build.
+
+### Linux packages
+
+Linux builds are x64 only: `MarkNotes-X.Y.Z-linux-x86_64.AppImage` and `MarkNotes-X.Y.Z-linux-amd64.deb`.
+
+- The deb (package `marknotes-desktop`) installs to `/opt/MarkNotes`, adds the `marknotes` command and a desktop entry,
+  and installs an AppArmor profile so the Chromium sandbox works on Ubuntu 24.04. It does not update itself.
+- The AppImage updates itself (`latest-linux.yml` points to it). Ubuntu 23.10 and later restrict unprivileged user
+  namespaces, so the AppImage cannot start the Chromium sandbox there: install the deb instead, or start the AppImage
+  with `--no-sandbox`.
 
 ### Repository secrets
 

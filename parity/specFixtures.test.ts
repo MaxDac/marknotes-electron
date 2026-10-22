@@ -1,0 +1,163 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import {
+  attachmentRefs,
+  extensionForType,
+  imageMarkdown,
+  isAttachmentPath,
+  scaledSize,
+} from '../src/shared/attachments';
+import { isNoteId, noteIdOf, splitFrontMatter, withNoteId } from '../src/shared/frontMatter';
+import { SyncManifest, type ManifestEntry } from '../src/shared/manifest';
+import { merge3, type ConflictChoice } from '../src/shared/merge';
+import { buildNoteIndex, filterNotes, findMention, noteIdFromHref, noteLink } from '../src/shared/noteLinks';
+import { MemoryNodeBackend, NoteStore } from '../src/shared/noteStore';
+import { CONFLICT_SUFFIX } from '../src/shared/syncEngine';
+
+/**
+ * Runs the shared marknotes-spec golden fixtures (git submodule at spec/) against the desktop implementation.
+ * See spec/README.md, "How apps consume this repository".
+ */
+
+const APP = 'desktop';
+const FIXTURES = join(import.meta.dirname, '..', 'spec', 'fixtures');
+
+interface FixtureCase {
+  name: string;
+  input: Record<string, unknown>;
+  expected: unknown;
+  knownDivergence?: Partial<Record<'android' | 'desktop' | 'web', string>>;
+}
+
+interface FixtureFile {
+  description: string;
+  cases: FixtureCase[];
+}
+
+// Fixture inputs are untyped JSON; each runner reads the fields its fixture file documents.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Runner = (input: any) => unknown;
+
+const newStore = () => new NoteStore(new MemoryNodeBackend());
+
+/** Maps every fixture file (its path under fixtures/, without .json) to the desktop code it exercises. */
+const runners: Record<string, Runner> = {
+  'note-ids/validation': ({ value }) => ({ valid: isNoteId(value) }),
+
+  'front-matter/read-id': ({ text }) => ({ id: noteIdOf(text) }),
+  'front-matter/with-id': ({ text, id }) => ({ text: withNoteId(text, id) }),
+  'front-matter/split': ({ text }) => {
+    const { frontMatter, body } = splitFrontMatter(text);
+    return { frontMatter, body };
+  },
+
+  'note-links/link-markdown': ({ title, id }) => ({ markdown: noteLink(title, id) }),
+  'note-links/parse-href': ({ href }) => ({ id: noteIdFromHref(href) }),
+  'note-links/mention': ({ lineBeforeCursor }) => ({ mention: findMention(lineBeforeCursor, 0) }),
+  'note-links/filter': ({ query, notes }) => {
+    const index = (notes as { id: string; title: string; fullPath: string }[]).map((n) => ({
+      ...n,
+      path: `${n.fullPath}.md`,
+    }));
+    return { ids: filterNotes(index, query).map((n) => n.id) };
+  },
+
+  'attachments/extension-for-type': ({ mime }) => ({ extension: extensionForType(mime) }),
+  'attachments/is-attachment-path': ({ path }) => ({ isAttachment: isAttachmentPath(path) }),
+  'attachments/image-markdown': ({ fileName, path }) => ({ markdown: imageMarkdown(fileName, path) }),
+  'attachments/scaled-size': ({ width, height }) => scaledSize(width, height),
+  'attachments/refs': ({ text }) => ({ refs: [...attachmentRefs(text)].sort() }),
+
+  'manifest/parse': ({ json }) => {
+    const manifest = SyncManifest.parse(json);
+    return {
+      manifest: manifest && {
+        deviceId: manifest.deviceId,
+        updatedAt: manifest.updatedAt,
+        files: manifest.files,
+      },
+    };
+  },
+  'manifest/serialize': ({ deviceId, updatedAt, files }) => ({
+    json: new SyncManifest(deviceId, updatedAt, files as Record<string, ManifestEntry>).toJson(),
+  }),
+
+  // The note index gives later duplicates (by sorted path) a new id and saves them.
+  'duplicate-ids/resolve': async ({ notes }) => {
+    const store = newStore();
+    const list = notes as { path: string; id: string }[];
+    for (const n of list) await store.write(n.path, `---\nid: ${n.id}\n---\nBody\n`);
+    await buildNoteIndex(store, { assign: true });
+    const reassigned: string[] = [];
+    for (const n of list) if (noteIdOf(await store.read(n.path)) !== n.id) reassigned.push(n.path);
+    return { reassigned: reassigned.sort() };
+  },
+
+  'merge/merge3': ({ base, local, remote, choices }) => {
+    const result = merge3(base, local, remote);
+    const byIndex: Partial<Record<number, ConflictChoice>> = {};
+    for (const [index, choice] of Object.entries((choices ?? {}) as Record<string, ConflictChoice>)) {
+      byIndex[Number(index)] = choice;
+    }
+    return { text: result.text(byIndex), conflicts: result.conflicts.length };
+  },
+  // The sync engine names the copy with NoteStore.uniqueSibling(path, CONFLICT_SUFFIX).
+  'merge/conflict-copy-name': async ({ path }) => ({
+    path: await newStore().uniqueSibling(path, CONFLICT_SUFFIX),
+  }),
+};
+
+/**
+ * Cases failing for a reason the spec does not record yet, by fixture file and case name.
+ * TODO: remove each entry once the spec (or the app) is fixed.
+ */
+const pendingSpecFixes: Record<string, Record<string, string>> = {};
+
+function fixtureFiles(): string[] {
+  if (!existsSync(FIXTURES)) {
+    throw new Error(`${FIXTURES} not found: run "git submodule update --init" to fetch marknotes-spec.`);
+  }
+  return readdirSync(FIXTURES, { recursive: true, encoding: 'utf8' })
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => f.replaceAll('\\', '/').replace(/\.json$/, ''))
+    .sort();
+}
+
+const files = fixtureFiles();
+const plain = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
+
+describe('marknotes-spec fixtures', () => {
+  it('maps every fixture file to a desktop runner', () => {
+    expect(
+      files.filter((f) => !(f in runners)),
+      'fixture files without a runner',
+    ).toEqual([]);
+    expect(
+      Object.keys(runners).filter((f) => !files.includes(f)),
+      'runners without a fixture file',
+    ).toEqual([]);
+  });
+
+  describe.each(files.filter((f) => f in runners))('%s', (file) => {
+    const fixture = JSON.parse(readFileSync(join(FIXTURES, `${file}.json`), 'utf8')) as FixtureFile;
+    const run = runners[file];
+
+    for (const c of fixture.cases) {
+      const divergence = c.knownDivergence?.[APP];
+      const pending = pendingSpecFixes[file]?.[c.name];
+      if (pending) {
+        it.skip(`${c.name} (pending spec fix: ${pending})`, () => {});
+      } else if (divergence) {
+        // A known divergence must still differ, so a fix is noticed and the spec entry removed.
+        it(`${c.name} (known divergence: ${divergence})`, async () => {
+          expect(plain(await run(c.input))).not.toStrictEqual(c.expected);
+        });
+      } else {
+        it(c.name, async () => {
+          expect(plain(await run(c.input))).toStrictEqual(c.expected);
+        });
+      }
+    }
+  });
+});

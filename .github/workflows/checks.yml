@@ -1,7 +1,7 @@
 name: Checks
 
 # Reusable checks shared by PR CI, Main CI and Release.
-# Script contract (package.json): deps:check, deps:audit, lint, format:check, typecheck, test, e2e, build, dist.
+# Script contract (package.json): deps:check, deps:audit, lint, format:check, typecheck, test, test:parity, e2e, build, dist.
 on:
   workflow_call:
 
@@ -60,6 +60,22 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # Shared golden fixtures from marknotes-spec (spec/ submodule), also run by the Android and web apps.
+  parity:
+    name: Parity (marknotes-spec fixtures)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run test:parity
+
   e2e:
     name: E2E (Playwright Electron)
     runs-on: ubuntu-24.04
@@ -96,6 +112,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run dist -- --linux AppImage deb --publish never
+      - name: Install package verification tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends desktop-file-utils xdotool x11-utils xvfb
+      # deb metadata/contents, install + launch with the Chromium sandbox, extracted AppImage launch.
+      - name: Verify and launch-smoke Linux installers
+        run: xvfb-run -a bash scripts/linux-package-smoke.sh
       - name: Upload Linux installers
         uses: actions/upload-artifact@v7
         with:
