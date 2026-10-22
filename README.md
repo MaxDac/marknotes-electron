@@ -20,6 +20,13 @@ and the same sync format, so all MarkNotes apps can share one drive folder.
 - **Images**: insert PNG, JPEG, GIF or WebP images from the toolbar, by pasting or by drag-and-drop. Images are
   downscaled to 2048 px, stored once in the root `attachments/` folder (named by their SHA-256) and synced to every
   drive. **Settings → Clean unused images** deletes images no note references.
+- **Chord sequences** for guitar and bass (ported from ChordBuilder): **New chord sequence** creates a note with
+  `type: chords` in its front-matter, marked 🎸 in the note list. It opens in a chord editor: build each chord on a
+  fretboard (mute, open or a fret from 1 to 24 with fingers 1–4 per string; bass shows frets 9–24 with a red line at the
+  12th), add a name, tags and a note, then edit, duplicate, reorder or delete chords in the sequence. Chords with the
+  same name and instrument are numbered (`1 C`, `2 C`). The file stays readable markdown (see the spec's
+  "Chord sequences"); **View as text** opens it in the markdown editor, which is also used, with the error line, when
+  the file cannot be parsed.
 - **Appearance**: theme System, Light or Dark, and an accent colour from 8 palettes.
 - **Multi-drive two-way sync** with any number of Proton Drive, Dropbox and OneDrive accounts. Sync runs on launch and
   on **Sync now** (no background polling). It keeps per-drive state and the `.marknotes/manifest.json` manifest, and merges lines

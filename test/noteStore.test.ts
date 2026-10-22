@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { isChordSequence } from '../src/shared/chords';
 import { splitFrontMatter } from '../src/shared/frontMatter';
 import { MemoryNodeBackend, NoteStore } from '../src/shared/noteStore';
 
@@ -17,6 +18,14 @@ describe('NoteStore', () => {
     const split = splitFrontMatter(await store.read(path));
     expect(split.id).toMatch(/^[0-9a-hjkmnp-tv-z]{8}$/);
     expect(split.body).toBe('');
+  });
+
+  it('createChordSequence writes a chord-sequence note with an empty body', async () => {
+    const path = await store.createChordSequence('', 'Songs');
+    expect(path).toBe('Songs.md');
+    const text = await store.read(path);
+    expect(text).toMatch(/^---\nid: [0-9a-hjkmnp-tv-z]{8}\ntype: chords\n---\n$/);
+    expect(isChordSequence(text)).toBe(true);
   });
 
   it('hides the attachments folder from the note tree but not from listAll', async () => {
