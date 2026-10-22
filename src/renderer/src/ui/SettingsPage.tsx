@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { cleanUnusedAttachments } from '../../../shared/attachments';
 import { PROVIDER_NAMES, syncFolder } from '../../../shared/types';
+import logo from '../../../../branding/marknotes-mark.svg';
 import type { Page } from '../App';
 import type { DriveStatus } from '../data/syncManager';
 import { ConfirmDialog } from './Dialog';
@@ -124,6 +125,10 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
           )}
 
           <h2>About</h2>
+          <p className="about-logo">
+            <img src={logo} alt="" className="logo" />
+            MarkNotes
+          </p>
           <p className="small">
             MarkNotes is a personal, non-commercial project. Sync happens on app launch and when you click
             &quot;Sync now&quot;; there is no background polling.

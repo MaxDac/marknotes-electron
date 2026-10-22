@@ -179,6 +179,13 @@ The desktop app reuses the Dropbox and Entra apps of the Android app. The full g
 - no Proton logos or branding;
 - the login screen states: "This is a third-party application not officially supported by Proton."
 
+## Branding
+
+The app icon is shared with the Android and web apps. The master SVGs live in `branding/` (`marknotes-icon.svg` for
+the app icon, `marknotes-mark.svg` for the in-app logo). The rasters in `build/` (`icon.png`, `icon.ico`, `icon.icns`
+and `icons/<size>.png` for Linux) are generated from them and committed; after changing an SVG run
+`npm i --no-save @resvg/resvg-js && node branding/generate-icons.mjs`.
+
 ## License
 
 MarkNotes is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Commercial use is not permitted.

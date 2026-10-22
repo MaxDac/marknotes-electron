@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron';
 import { join } from 'node:path';
+import iconPath from '../../build/icon.png?asset';
 import type { RemoteOp } from '../preload/api';
 import type { DriveProvider } from '../shared/types';
 import { FakeConnector } from './connectors/fake';
@@ -105,6 +106,8 @@ function createWindow() {
     minHeight: 400,
     show: false,
     title: 'MarkNotes',
+    // Windows and macOS take the icon from the executable; Linux needs it on the window.
+    ...(process.platform === 'linux' ? { icon: iconPath } : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
