@@ -8,6 +8,15 @@ import {
   isAttachmentPath,
   scaledSize,
 } from '../src/shared/attachments';
+import {
+  chordDisplayNames,
+  isChordSequence,
+  parseChordBody,
+  serializeChordBody,
+  validateChordSequence,
+  type Chord,
+  type ChordSequence,
+} from '../src/shared/chords';
 import { isNoteId, noteIdOf, splitFrontMatter, withNoteId } from '../src/shared/frontMatter';
 import { SyncManifest, type ManifestEntry } from '../src/shared/manifest';
 import { merge3, type ConflictChoice } from '../src/shared/merge';
@@ -93,6 +102,14 @@ const runners: Record<string, Runner> = {
     for (const n of list) if (noteIdOf(await store.read(n.path)) !== n.id) reassigned.push(n.path);
     return { reassigned: reassigned.sort() };
   },
+
+  'chords/detect': ({ text }) => ({ chords: isChordSequence(text) }),
+  'chords/parse': ({ body }) => parseChordBody(body),
+  'chords/serialize': ({ sequence, lineEnding }) => ({
+    body: serializeChordBody(sequence as ChordSequence, lineEnding),
+  }),
+  'chords/validate': ({ sequence }) => ({ errors: validateChordSequence(sequence as ChordSequence) }),
+  'chords/display-names': ({ chords }) => ({ displayNames: chordDisplayNames(chords as Chord[]) }),
 
   'merge/merge3': ({ base, local, remote, choices }) => {
     const result = merge3(base, local, remote);

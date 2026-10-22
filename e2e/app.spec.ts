@@ -133,6 +133,65 @@ test('notes, folders, editor and preview persist across restarts', async () => {
   await app.close();
 });
 
+test('chord sequences open in the chord editor and fall back to text on parse errors', async () => {
+  const userData = newUserData();
+  let { app, page } = await launch(userData);
+
+  await page.getByTestId('new-chords').click();
+  await page.getByRole('textbox', { name: 'Name' }).fill('Songs');
+  await page.getByRole('button', { name: 'Create' }).click();
+  const chordEditor = page.getByTestId('chord-editor');
+  await expect(chordEditor).toBeVisible();
+  await expect(page.getByTestId('entry').filter({ hasText: 'Songs' })).toContainText('🎸');
+
+  // Too few strings first, then a C major shape.
+  await page.getByTestId('chord-name').fill('C');
+  await page.getByTestId('save-chord').click();
+  await expect(page.getByTestId('chord-errors')).toContainText('Select at least three non-muted strings.');
+  await page.getByRole('button', { name: 'A2 fret 3', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Finger for A2' }).selectOption('3');
+  await page.getByRole('button', { name: 'D3 fret 2', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Finger for D3' }).selectOption('2');
+  await page.getByRole('button', { name: 'Open G3' }).click();
+  await page.getByRole('button', { name: 'B3 fret 1', exact: true }).click();
+  await page.getByRole('button', { name: 'Open E4' }).click();
+  await page.getByTestId('save-chord').click();
+  await expect(page.getByTestId('chord-card')).toHaveCount(1);
+  await expect(page.getByTestId('chord-card')).toContainText('1 C');
+
+  // Duplicates get the next sequence number.
+  await page.getByTestId('chord-card').getByRole('button', { name: 'Duplicate' }).click();
+  await expect(page.getByTestId('chord-card')).toHaveCount(2);
+  await expect(page.getByTestId('chord-card').nth(1)).toContainText('2 C');
+
+  await page.getByTestId('view-as-text').click();
+  const editor = page.getByTestId('editor-field');
+  await expect(editor).toContainText('## C (guitar)');
+  await expect(editor).toContainText('frets: x 3/3 2/2 0 1/1 0');
+
+  // A line before the first heading breaks parsing: the text editor stays with an error banner.
+  await editor.click();
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.type('oops');
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('chord-parse-error')).toContainText('Line 1: Expected a chord heading.');
+  await expect(page.getByTestId('open-chord-editor')).toBeDisabled();
+
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Delete');
+  await expect(page.getByTestId('chord-parse-error')).toBeHidden();
+  await page.getByTestId('open-chord-editor').click();
+  await expect(page.getByTestId('chord-card')).toHaveCount(2);
+
+  await page.waitForTimeout(800);
+  await app.close();
+  ({ app, page } = await launch(userData));
+  await page.getByTestId('entry').filter({ hasText: 'Songs' }).click();
+  await expect(page.getByTestId('chord-card')).toHaveCount(2);
+  await app.close();
+});
+
 test('appearance settings apply and persist', async () => {
   const userData = newUserData();
   let { app, page } = await launch(userData);

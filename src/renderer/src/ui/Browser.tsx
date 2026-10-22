@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { isChordSequence } from '../../../shared/chords';
 import type { NoteEntry } from '../../../shared/noteStore';
 import * as P from '../../../shared/paths';
 import logo from '../../../../branding/marknotes-mark.svg';
 import type { Page } from '../App';
 import { ConfirmDialog, Dialog, NameDialog } from './Dialog';
-import { Editor } from './Editor';
+import { NoteEditor } from './ChordEditor';
 import { errorMessage, useApp, useNotesVersion, useSyncState } from './context';
 
 type DialogState =
   | { kind: 'newNote' }
+  | { kind: 'newChords' }
   | { kind: 'newFolder' }
   | { kind: 'rename'; entry: NoteEntry }
   | { kind: 'delete'; entry: NoteEntry }
@@ -35,6 +37,7 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
   const [folder, setFolder] = useState('');
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [entries, setEntries] = useState<NoteEntry[]>([]);
+  const [chordPaths, setChordPaths] = useState<Set<string>>(new Set());
   const [folders, setFolders] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -52,6 +55,11 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
       const [list, all] = await Promise.all([notes.list(folder), notes.listFolders()]);
       if (cancelled) return;
       setEntries(list);
+      const chordFlags = await Promise.all(
+        list.map((e) => (e.isFolder ? false : notes.read(e.path).then(isChordSequence, () => false))),
+      );
+      if (cancelled) return;
+      setChordPaths(new Set(list.filter((_, i) => chordFlags[i]).map((e) => e.path)));
       setFolders(all.sort(treeOrder));
       if (openNote && !(await notes.exists(openNote)) && !cancelled) setOpenNote(null);
     })();
@@ -91,6 +99,9 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
         </h1>
         <button className="filled" data-testid="new-note" onClick={() => setDialog({ kind: 'newNote' })}>
           New note
+        </button>
+        <button data-testid="new-chords" onClick={() => setDialog({ kind: 'newChords' })}>
+          New chord sequence
         </button>
         <button onClick={() => setDialog({ kind: 'newFolder' })}>New folder</button>
         <div className="spacer" />
@@ -171,7 +182,7 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
                   setMenu({ entry, x: e.clientX, y: e.clientY });
                 }}
               >
-                <span>{entry.isFolder ? '📁' : '📄'}</span>
+                <span>{entry.isFolder ? '📁' : chordPaths.has(entry.path) ? '🎸' : '📄'}</span>
                 <span className="name">
                   {P.displayName(entry.path)}
                   {!entry.isFolder && <div className="meta">{formatDate(entry.modifiedMillis)}</div>}
@@ -192,7 +203,12 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
           </div>
         </section>
         {openNote ? (
-          <Editor key={openNote} path={openNote} onClose={() => setOpenNote(null)} onOpenNote={setOpenNote} />
+          <NoteEditor
+            key={openNote}
+            path={openNote}
+            onClose={() => setOpenNote(null)}
+            onOpenNote={setOpenNote}
+          />
         ) : (
           <div className="editor-pane">
             <div className="empty">Select a note or create a new one.</div>
@@ -233,6 +249,14 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
           confirm="Create"
           onClose={() => setDialog(null)}
           onSubmit={async (name) => setOpenNote(await notes.createNote(folder, name.trim()))}
+        />
+      )}
+      {dialog?.kind === 'newChords' && (
+        <NameDialog
+          title="New chord sequence"
+          confirm="Create"
+          onClose={() => setDialog(null)}
+          onSubmit={async (name) => setOpenNote(await notes.createChordSequence(folder, name.trim()))}
         />
       )}
       {dialog?.kind === 'newFolder' && (

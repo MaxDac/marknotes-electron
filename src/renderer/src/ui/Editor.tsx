@@ -4,7 +4,7 @@ import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { languages } from '@codemirror/language-data';
 import { EditorSelection, EditorState, Prec } from '@codemirror/state';
 import { EditorView, keymap, placeholder, type ViewUpdate } from '@codemirror/view';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { IMAGE_TYPES, imageMarkdown } from '../../../shared/attachments';
 import { splitFrontMatter } from '../../../shared/frontMatter';
 import * as E from '../../../shared/markdownEditing';
@@ -126,7 +126,15 @@ interface MentionPopupState {
   selected: number;
 }
 
-export function Editor(props: { path: string; onClose(): void; onOpenNote(path: string): void }) {
+export function Editor(props: {
+  path: string;
+  onClose(): void;
+  onOpenNote(path: string): void;
+  /** Extra header controls, e.g. the switch back to the chord editor. */
+  headerExtra?: ReactNode;
+  /** A banner shown above the editor. */
+  notice?: ReactNode;
+}) {
   const { notes } = useApp();
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -423,10 +431,12 @@ export function Editor(props: { path: string; onClose(): void; onOpenNote(path: 
             {m === 'edit' ? 'Edit' : m === 'split' ? 'Split' : 'Preview'}
           </button>
         ))}
+        {props.headerExtra}
         <button className="icon" aria-label="Close" onClick={props.onClose}>
           ✕
         </button>
       </div>
+      {props.notice}
       {mode !== 'preview' && (
         <div className="toolbar" data-testid="format-toolbar">
           {TOOLBAR.map((t) => (
