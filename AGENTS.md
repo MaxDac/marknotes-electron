@@ -12,6 +12,7 @@ committing:
 ```sh
 git submodule update --init   # fetch spec/ (marknotes-spec) if the clone has no submodules
 npm ci
+npm run preview               # build and open the production app in Electron
 npm run lint                  # eslint
 npm run format:check          # prettier (npx prettier --write <files> to fix)
 npm run typecheck             # tsc for main/preload/shared and renderer
@@ -23,6 +24,10 @@ npm run deps:check            # no deprecated packages in the lockfile
 npm run deps:audit            # zero npm audit findings at any severity
 npm run dist                  # electron-builder installers to release/
 ```
+
+Development installs automatically apply the dependency patch and install the pinned Electron runtime.
+Production-only installs skip the runtime. To repair an incomplete runtime download, run
+`npm exec -- install-electron`; to restore missing development dependencies, run `npm ci --include=dev`.
 
 | CI check (PR CI → `Checks / …`)    | Command                                                        |
 | ---------------------------------- | -------------------------------------------------------------- |

@@ -59,9 +59,21 @@ npm run typecheck      # tsc
 npm test               # vitest unit tests
 npm run test:parity    # marknotes-spec golden fixtures (needs the spec/ submodule)
 npm run build          # production bundles (electron-vite)
+npm run preview        # build and open the production app in Electron
 npm run e2e            # Playwright Electron E2E (run `npm run build` first)
 npm run dist           # installers via electron-builder, written to release/
 ```
+
+`npm ci` applies the pinned dependency patch and installs the Electron runtime using the installed Electron
+package's official installer. Both steps are safe to repeat, and installation failures stop setup.
+Production-only installs (`npm ci --omit=dev`) skip the development runtime; use `npm ci --include=dev`
+to restore development tools.
+
+Both `dev` and `preview` open a desktop Electron window, not a browser preview server. Preview builds all bundles
+by default; `npm run preview -- --skipBuild` opens an existing build. If an older installation reports
+`Electron uninstall` or a missing Electron executable, run `npm exec -- install-electron` to download the pinned
+runtime, then retry preview. If `electron-vite` itself is missing, run `npm ci --include=dev` first.
+On headless Linux, launch Electron tests under Xvfb as described in [AGENTS.md](AGENTS.md).
 
 The `@electron/get` 3.x override uses `global-agent` 4 to avoid its deprecated `boolean` dependency
 and the vulnerable `roarr` / `sprintf-js` chain while retaining the proxy bootstrap API.
