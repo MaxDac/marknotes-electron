@@ -16,7 +16,7 @@ export default defineConfig({
     },
   },
   preload: {
-    build: { rollupOptions: { output: { format: 'cjs', entryFileNames: '[name].cjs' } } },
+    build: { rolldownOptions: { output: { format: 'cjs', entryFileNames: '[name].cjs' } } },
   },
   renderer: {
     plugins: [react()],
