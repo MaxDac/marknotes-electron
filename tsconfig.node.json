@@ -10,6 +10,8 @@
     "src/shared/**/*",
     "electron.vite.config.ts",
     "vitest.config.ts",
+    "vitest.parity.config.ts",
+    "parity/**/*",
     "playwright.config.ts",
     "e2e/**/*",
     "test/**/*",

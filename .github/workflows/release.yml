@@ -152,6 +152,10 @@ jobs:
             echo "::error::latest-mac.yml must list both arm64 and x64 builds"
             exit 1
           fi
+          if ! grep -qx "path: MarkNotes-$VERSION-linux-x86_64.AppImage" dist/latest-linux.yml; then
+            echo "::error::latest-linux.yml must point to the AppImage (the deb cannot self-update)"
+            exit 1
+          fi
           ls -l dist
       - name: Checksums
         run: (cd dist && sha256sum -- * > SHA256SUMS)
@@ -167,3 +171,36 @@ jobs:
             --title "MarkNotes Desktop $VERSION" \
             --generate-notes \
             "${flags[@]}"
+      - name: Write job summary
+        if: always()
+        env:
+          PRERELEASE: ${{ inputs.prerelease }}
+          SIGNED: ${{ secrets.CSC_LINK != '' }}
+          NOTARIZED: ${{ secrets.APPLE_ID != '' }}
+        run: |
+          {
+            echo "## MarkNotes Desktop $VERSION"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Version | \`$VERSION\` |"
+            echo "| Tag | \`v$VERSION\` |"
+            echo "| Pre-release | $PRERELEASE |"
+            echo "| Commit | \`$GITHUB_SHA\` |"
+            echo "| Code signing (CSC_LINK) | $SIGNED |"
+            echo "| macOS notarization (APPLE_ID) | $NOTARIZED |"
+            if [ -f dist/SHA256SUMS ]; then
+              echo
+              echo "### Assets"
+              echo
+              echo "| Asset | Size | SHA-256 |"
+              echo "| --- | --- | --- |"
+              while read -r sum name; do
+                size=$(stat -c %s "dist/$name")
+                echo "| \`$name\` | $size | \`$sum\` |"
+              done < dist/SHA256SUMS
+            else
+              echo
+              echo "No release assets were collected."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

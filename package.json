@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "Desktop markdown notes with folders and sync to Proton Drive (unofficial), Dropbox and OneDrive",
-  "author": "MaxDac",
+  "author": {
+    "name": "MaxDac",
+    "email": "25101798+MaxDac@users.noreply.github.com"
+  },
+  "desktopName": "marknotes.desktop",
   "license": "SEE LICENSE IN LICENSE.md",
   "homepage": "https://github.com/MaxDac/marknotes-electron",
   "main": "out/main/index.js",
@@ -21,6 +25,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
+    "test:parity": "vitest run --config vitest.parity.config.ts",
     "e2e": "playwright test",
     "dist": "electron-vite build && electron-builder"
   },
@@ -105,8 +110,26 @@
         "deb"
       ],
       "category": "Office",
-      "maintainer": "MaxDac",
-      "icon": "build/icons"
+      "maintainer": "MaxDac <25101798+MaxDac@users.noreply.github.com>",
+      "vendor": "MaxDac",
+      "executableName": "marknotes",
+      "syncDesktopName": true,
+      "synopsis": "Markdown notes with folders and multi-drive sync",
+      "description": "Offline-first markdown notes with folders, note links and images, synced to Proton Drive (unofficial), Dropbox and OneDrive.",
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
+      "icon": "build/icons",
+      "desktop": {
+        "entry": {
+          "GenericName": "Markdown Notes",
+          "Keywords": "markdown;notes;notebook;sync;",
+          "StartupNotify": "true"
+        }
+      }
+    },
+    "deb": {
+      "fpm": [
+        "--category=editors"
+      ]
     },
     "win": {
       "target": [

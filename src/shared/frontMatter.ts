@@ -5,7 +5,7 @@
  *     id: k7f3q2xa
  *     ---
  *
- * Only the `id` key is interpreted; every other line is preserved verbatim. See docs/note-format.md.
+ * Only the `id` key is interpreted; every other line is preserved verbatim. See spec/note-format.md.
  */
 
 /** Crockford base32, lowercase, without i, l, o and u. */
