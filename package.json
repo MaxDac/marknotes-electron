@@ -38,7 +38,7 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.14",
     "@lezer/highlight": "^1.2.5",
-    "@protontech/drive-sdk": "^0.22.2",
+    "@protontech/drive-sdk": "^0.23.0",
     "bcryptjs": "^3.0.3",
     "electron-updater": "6.8.11",
     "highlight.js": "^11.12.0",
