@@ -1,3 +1,4 @@
+import { isAttachmentPath } from './attachments';
 import { sha256Hex, utf8 } from './hashing';
 import { MANIFEST_PATH, SyncManifest, type ManifestEntry } from './manifest';
 import { merge3, type MergeResult } from './merge';
@@ -75,6 +76,11 @@ export function isSyncablePath(path: string): boolean {
   }
 }
 
+/** Folders, markdown notes and attachments are synced; every other file is ignored. */
+function isSyncedEntry(path: string, isFolder: boolean): boolean {
+  return isFolder || P.isNote(path) || isAttachmentPath(path);
+}
+
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message || e.name : String(e));
 
 /**
@@ -140,7 +146,8 @@ export class SyncEngine {
       localHash: hash,
       syncedAt: this.clock(),
     });
-    if (typeof content !== 'string') await this.base.put(path, content);
+    // Attachments are immutable and never merged, so they need no merge ancestor.
+    if (typeof content !== 'string' && !isAttachmentPath(path)) await this.base.put(path, content);
   }
 
   /** @internal */
@@ -187,9 +194,9 @@ class SyncRun {
 
   async execute(): Promise<SyncResult> {
     const { local, remote, metadata } = this.d;
-    this.localAll = (await local.listAll()).filter((e) => e.isFolder || P.isNote(e.path));
+    this.localAll = (await local.listAll()).filter((e) => isSyncedEntry(e.path, e.isFolder));
     this.remoteAll = (await remote.snapshot()).filter(
-      (e) => isSyncablePath(e.path) && (e.isFolder || P.isNote(e.path)),
+      (e) => isSyncablePath(e.path) && isSyncedEntry(e.path, e.isFolder),
     );
     this.records = new Map((await metadata.all()).map((r) => [r.path, r]));
     this.manifest = await this.readManifest();
@@ -216,7 +223,7 @@ class SyncRun {
       if (!this.skipped.has(path)) await this.guarded(path, () => this.syncFolder(path));
     }
 
-    // Phase 2: notes.
+    // Phase 2: notes and attachments.
     const filePaths = new Set([
       ...this.localFiles,
       ...this.remoteFiles.keys(),
@@ -315,7 +322,9 @@ class SyncRun {
     const remoteFile = this.remoteFiles.get(path);
     const r = this.records.get(path);
     const record = r && !r.isFolder ? r : undefined;
-    if (inLocal && remoteFile) await this.syncNoteOnBothSides(path, remoteFile, record);
+    if (inLocal && remoteFile && isAttachmentPath(path))
+      await this.syncAttachmentOnBothSides(path, remoteFile, record);
+    else if (inLocal && remoteFile) await this.syncNoteOnBothSides(path, remoteFile, record);
     else if (inLocal) await this.syncLocalOnlyNote(path, record);
     else if (remoteFile) await this.syncRemoteOnlyNote(path, remoteFile, record);
     else await this.forget(path);
@@ -336,6 +345,17 @@ class SyncRun {
     if (localChanged && remoteChanged) await this.compareOrMerge(path, remoteFile, record);
     else if (localChanged) await this.uploadRevision(path, remoteFile);
     else if (remoteChanged) await this.download(path, remoteFile);
+  }
+
+  /**
+   * Attachments are named after the hash of their content, so both sides hold the same bytes: they are never
+   * merged and never conflict. A local copy that no longer matches its record is re-uploaded.
+   */
+  private async syncAttachmentOnBothSides(path: string, remoteFile: RemoteEntry, record?: SyncRecord) {
+    const localHash = await this.localHash(path);
+    if (record && localHash !== record.localHash) await this.uploadRevision(path, remoteFile);
+    else if (!record || this.remoteChanged(remoteFile, record))
+      await this.engine.recordFile(path, remoteFile, localHash);
   }
 
   private async syncLocalOnlyNote(path: string, record?: SyncRecord) {

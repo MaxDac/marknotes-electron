@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { splitFrontMatter } from '../src/shared/frontMatter';
 import { MemoryNodeBackend, NoteStore } from '../src/shared/noteStore';
 
 describe('NoteStore', () => {
@@ -10,10 +11,21 @@ describe('NoteStore', () => {
     store = new NoteStore(backend);
   });
 
-  it('createNote adds extension and is empty', async () => {
+  it('createNote adds extension and an id, with an empty body', async () => {
     const path = await store.createNote('', 'Shopping');
     expect(path).toBe('Shopping.md');
-    expect(await store.read(path)).toBe('');
+    const split = splitFrontMatter(await store.read(path));
+    expect(split.id).toMatch(/^[0-9a-hjkmnp-tv-z]{8}$/);
+    expect(split.body).toBe('');
+  });
+
+  it('hides the attachments folder from the note tree but not from listAll', async () => {
+    await store.write('n.md', 'x');
+    await store.writeBytes(`attachments/${'a'.repeat(64)}.png`, new Uint8Array([1]));
+    expect((await store.list('')).map((e) => e.path)).toEqual(['n.md']);
+    expect(await store.listFolders()).toEqual([]);
+    expect((await store.listAll()).map((e) => e.path)).toContain(`attachments/${'a'.repeat(64)}.png`);
+    await expect(store.createChildFolder('', 'attachments')).rejects.toThrow('reserved');
   });
 
   it('write and read in nested folders', async () => {

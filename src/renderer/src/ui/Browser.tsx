@@ -188,7 +188,7 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
           </div>
         </section>
         {openNote ? (
-          <Editor key={openNote} path={openNote} onClose={() => setOpenNote(null)} />
+          <Editor key={openNote} path={openNote} onClose={() => setOpenNote(null)} onOpenNote={setOpenNote} />
         ) : (
           <div className="editor-pane">
             <div className="empty">Select a note or create a new one.</div>

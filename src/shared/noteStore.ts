@@ -1,3 +1,5 @@
+import { isInAttachments } from './attachments';
+import { newNoteContent } from './frontMatter';
 import * as P from './paths';
 
 export interface NoteEntry {
@@ -43,6 +45,9 @@ const byName = (a: string, b: string) => {
 /** Hidden entries (starting with ".") are ignored, like in the Android LocalNoteStore. */
 const isVisible = (n: StoredNode) => !P.name(n.path).startsWith('.');
 
+/** Entries shown in the note tree: the root `attachments` folder holds images and is hidden. */
+const isTreeVisible = (n: StoredNode) => isVisible(n) && !isInAttachments(n.path);
+
 const toEntry = ({ path, isFolder, modifiedMillis, size }: StoredNode): NoteEntry => ({
   path,
   isFolder,
@@ -86,7 +91,7 @@ export class NoteStore {
   async list(folder = ''): Promise<NoteEntry[]> {
     const base = P.normalize(folder);
     return (await this.backend.all())
-      .filter((n) => P.parent(n.path) === base && isVisible(n))
+      .filter((n) => P.parent(n.path) === base && isTreeVisible(n))
       .map(toEntry)
       .sort(
         (a, b) =>
@@ -94,7 +99,10 @@ export class NoteStore {
       );
   }
 
-  /** Lists every folder and file below the root, depth first, sorted by name within a folder. */
+  /**
+   * Lists every folder and file below the root (attachments included), depth first, sorted by name within a
+   * folder.
+   */
   async listAll(): Promise<NoteEntry[]> {
     const nodes = (await this.backend.all()).filter(isVisible).map(toEntry);
     const children = new Map<string, NoteEntry[]>();
@@ -115,9 +123,10 @@ export class NoteStore {
     return result;
   }
 
+  /** Every folder of the note tree (the attachments folder excluded). */
   async listFolders(): Promise<string[]> {
     return (await this.backend.all())
-      .filter((n) => n.isFolder)
+      .filter((n) => n.isFolder && !isInAttachments(n.path))
       .map((n) => n.path)
       .sort();
   }
@@ -174,14 +183,14 @@ export class NoteStore {
     return p;
   }
 
-  /** Creates an empty note named `noteName` (".md" appended if missing) and returns its path. */
+  /** Creates an empty note with a fresh id named `noteName` (".md" appended if missing) and returns its path. */
   async createNote(folder: string, noteName: string): Promise<string> {
     const trimmed = noteName.trim();
     P.validateName(trimmed);
     const fileName = P.isNote(trimmed) ? trimmed : trimmed + P.NOTE_EXTENSION;
     const path = P.join(P.normalize(folder), fileName);
     if (await this.exists(path)) throw new Error(`"${fileName}" already exists`);
-    await this.write(path, '');
+    await this.write(path, newNoteContent());
     return path;
   }
 
@@ -190,6 +199,7 @@ export class NoteStore {
     const trimmed = folderName.trim();
     P.validateName(trimmed);
     const path = P.join(P.normalize(folder), trimmed);
+    if (isInAttachments(path)) throw new Error(`"${trimmed}" is reserved for images`);
     if (await this.exists(path)) throw new Error(`"${trimmed}" already exists`);
     return this.createFolder(path);
   }

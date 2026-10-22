@@ -1,5 +1,7 @@
 import hljs from 'highlight.js/lib/common';
 import MarkdownIt from 'markdown-it';
+import { attachmentFromSrc } from '../../../shared/attachments';
+import { noteIdFromHref } from '../../../shared/noteLinks';
 
 const escape = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -39,6 +41,32 @@ md.core.ruler.after('inline', 'task-lists', (state) => {
     checkbox.content = `<input type="checkbox" disabled${match[1] === ' ' ? '' : ' checked'}>`;
     inline.children!.unshift(checkbox);
     tokens[i - 2].attrJoin('class', 'task');
+  }
+});
+
+/** Images stored as attachments get a data-attachment attribute; the preview loads them from the note store. */
+const defaultImage = md.renderer.rules.image!;
+md.renderer.rules.image = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+  const attachment = attachmentFromSrc(String(token.attrGet('src') ?? ''));
+  if (attachment) {
+    token.attrSet('src', '');
+    token.attrSet('data-attachment', attachment);
+  }
+  return defaultImage(tokens, idx, options, env, self);
+};
+
+/** `marknotes:<id>` links get a data-note-id attribute so the preview can resolve them. */
+md.core.ruler.push('note-links', (state) => {
+  for (const block of state.tokens) {
+    for (const token of block.children ?? []) {
+      if (token.type !== 'link_open') continue;
+      const id = noteIdFromHref(String(token.attrGet('href') ?? ''));
+      if (id) {
+        token.attrSet('data-note-id', id);
+        token.attrJoin('class', 'note-link');
+      }
+    }
   }
 });
 

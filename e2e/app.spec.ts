@@ -147,6 +147,53 @@ test('appearance settings apply and persist', async () => {
   await app.close();
 });
 
+test('@ links to other notes and inserts images', async () => {
+  const userData = newUserData();
+  const { app, page } = await launch(userData);
+  try {
+    await createNote(page, 'Target');
+    await page.getByTestId('editor-field').click();
+    await page.keyboard.type('target body');
+    await page.waitForTimeout(800);
+
+    await createNote(page, 'Source');
+    await page.getByTestId('editor-field').click();
+    await page.keyboard.type('see @targ');
+    const popup = page.getByTestId('mention-popup');
+    await expect(popup).toBeVisible();
+    const option = popup.getByTestId('mention-option').filter({ hasText: 'Target' });
+    await expect(option).toHaveCount(1);
+    const id = (await option.getByTestId('note-id').textContent())!.trim();
+    expect(id).toMatch(/^[0-9a-hjkmnp-tv-z]{8}$/);
+    await page.keyboard.press('Enter');
+    await expect(popup).toBeHidden();
+    await expect(page.getByTestId('editor-field')).toContainText(`see [Target](marknotes:${id})`);
+    // The front-matter header stays hidden from the editor.
+    await expect(page.getByTestId('editor-field')).not.toContainText('id:');
+
+    // A tiny 1x1 PNG.
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    await page
+      .getByTestId('image-input')
+      .setInputFiles({ name: 'dot.png', mimeType: 'image/png', buffer: png });
+    await expect(page.getByTestId('editor-field')).toContainText(
+      /!\[dot\]\(attachments\/[0-9a-f]{64}\.png\)/,
+    );
+    const preview = page.getByTestId('markdown-preview');
+    await expect(preview.locator('img')).toHaveAttribute('src', /^blob:/);
+
+    await preview.getByRole('link', { name: 'Target' }).click();
+    await expect(page.getByTestId('note-title')).toHaveText('Target');
+    await expect(page.getByTestId('editor-field')).toContainText('target body');
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
+
 test('syncs with a drive and resolves a conflict', async () => {
   const { app, page } = await launch(newUserData());
   await createNote(page, 'Shared');
@@ -171,7 +218,13 @@ test('syncs with a drive and resolves a conflict', async () => {
         window.marknotes.testRemote!('dropbox:test', a as 'put' | 'read', p, t ?? undefined),
       [action, path, text ?? null] as const,
     );
-  expect(await remote('read', 'Documents/MarkNotes/Shared.md')).toEqual({ ok: true, value: 'line one' });
+  const uploaded = await remote('read', 'Documents/MarkNotes/Shared.md');
+  // New notes carry their id in a front-matter header that the editor hides.
+  const header = /^---\nid: [0-9a-hjkmnp-tv-z]{8}\n---\n/.exec(
+    uploaded.ok ? String(uploaded.value) : '',
+  )?.[0];
+  expect(header).toBeTruthy();
+  expect(uploaded).toEqual({ ok: true, value: `${header}line one` });
 
   // A note created on another device comes down.
   await remote('put', 'Documents/MarkNotes/Remote.md', 'from the drive');
@@ -179,7 +232,7 @@ test('syncs with a drive and resolves a conflict', async () => {
   await expect(page.getByTestId('sync-message')).toContainText('↑0 ↓1');
 
   // Both sides change the same line: conflict.
-  await remote('put', 'Documents/MarkNotes/Shared.md', 'line theirs');
+  await remote('put', 'Documents/MarkNotes/Shared.md', `${header}line theirs`);
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByTestId('entry').filter({ hasText: 'Shared' }).click();
   await page.getByTestId('editor-field').click();
@@ -193,7 +246,10 @@ test('syncs with a drive and resolves a conflict', async () => {
   await conflict.getByRole('button', { name: 'Theirs', exact: true }).click();
   await conflict.getByRole('button', { name: 'Save merge' }).click();
   await expect(page.getByText('No conflicts')).toBeVisible();
-  expect(await remote('read', 'Documents/MarkNotes/Shared.md')).toEqual({ ok: true, value: 'line theirs' });
+  expect(await remote('read', 'Documents/MarkNotes/Shared.md')).toEqual({
+    ok: true,
+    value: `${header}line theirs`,
+  });
 
   // Disconnect keeps the notes.
   await page.getByRole('button', { name: 'Back' }).click();

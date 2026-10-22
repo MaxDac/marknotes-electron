@@ -538,3 +538,76 @@ textarea.merged {
   font-size: 11px;
   margin-left: 4px;
 }
+.preview img.missing {
+  min-width: 120px;
+  min-height: 40px;
+  border: 1px dashed var(--danger);
+}
+.preview a.note-link {
+  text-decoration: none;
+  border-bottom: 1px dotted var(--primary);
+}
+.preview a.note-link.broken {
+  color: var(--danger);
+  border-bottom: 1px dashed var(--danger);
+  text-decoration: line-through;
+}
+.editor-pane {
+  position: relative;
+}
+.mention-popup {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  max-height: 40%;
+  overflow: auto;
+  z-index: 10;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 20%);
+  padding: 4px 0;
+}
+.mention-empty {
+  padding: 8px 12px;
+}
+.mention-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.mention-row.selected {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+.mention-text {
+  flex: 1;
+  min-width: 0;
+}
+.mention-title,
+.mention-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.id-chip {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+.logo {
+  width: 24px;
+  height: 24px;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+.topbar h1 {
+  display: flex;
+  align-items: center;
+}
