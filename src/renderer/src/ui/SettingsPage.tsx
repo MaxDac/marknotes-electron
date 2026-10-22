@@ -1,15 +1,20 @@
 import { useState } from 'react';
+import { cleanUnusedAttachments } from '../../../shared/attachments';
 import { PROVIDER_NAMES, syncFolder } from '../../../shared/types';
+import logo from '../../../../branding/marknotes-mark.svg';
 import type { Page } from '../App';
 import type { DriveStatus } from '../data/syncManager';
 import { ConfirmDialog } from './Dialog';
-import { useApp, useSyncState } from './context';
+import { errorMessage, useApp, useSyncState } from './context';
 import { PALETTES, THEME_MODES, type ThemeColor } from './theme';
 
 export function SettingsPage(props: { navigate(page: Page): void }) {
-  const { sync, theme, setTheme } = useApp();
+  const { notes, sync, theme, setTheme } = useApp();
   const state = useSyncState();
   const [disconnect, setDisconnect] = useState<DriveStatus | null>(null);
+  const [confirmClean, setConfirmClean] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanMessage, setCleanMessage] = useState<string | null>(null);
 
   return (
     <>
@@ -103,7 +108,27 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
             </div>
           </div>
 
+          <h2>Images</h2>
+          <p className="small">
+            Images are stored in the attachments folder and synced to every drive. Images that no note uses
+            any more are only removed when you clean them up here.
+          </p>
+          <div className="row">
+            <button className="outlined" disabled={cleaning} onClick={() => setConfirmClean(true)}>
+              Clean unused images
+            </button>
+          </div>
+          {cleanMessage && (
+            <p className="small" data-testid="clean-message">
+              {cleanMessage}
+            </p>
+          )}
+
           <h2>About</h2>
+          <p className="about-logo">
+            <img src={logo} alt="" className="logo" />
+            MarkNotes
+          </p>
           <p className="small">
             MarkNotes is a personal, non-commercial project. Sync happens on app launch and when you click
             &quot;Sync now&quot;; there is no background polling.
@@ -118,6 +143,31 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
           danger
           onClose={() => setDisconnect(null)}
           onConfirm={() => void sync.removeDrive(disconnect.account)}
+        />
+      )}
+      {confirmClean && (
+        <ConfirmDialog
+          title="Clean unused images?"
+          message="Images that no note references are deleted from this device and, on the next sync, from every drive."
+          confirm="Delete"
+          danger
+          onClose={() => setConfirmClean(false)}
+          onConfirm={() => {
+            setCleaning(true);
+            setCleanMessage(null);
+            cleanUnusedAttachments(notes).then(
+              (count) => {
+                setCleanMessage(
+                  count === 0 ? 'No unused images' : `Deleted ${count} unused image${count === 1 ? '' : 's'}`,
+                );
+                setCleaning(false);
+              },
+              (e) => {
+                setCleanMessage(`Could not clean images: ${errorMessage(e)}`);
+                setCleaning(false);
+              },
+            );
+          }}
         />
       )}
     </>

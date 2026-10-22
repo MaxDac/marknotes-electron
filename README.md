@@ -14,16 +14,25 @@ and the same sync format, so all MarkNotes apps can share one drive folder.
   rename, delete and move notes and folders, and a sidebar shows the whole folder tree.
 - **Editor**: raw markdown (CodeMirror 6) with a preview toggle (markdown-it: tables, strikethrough, task lists,
   highlighted code blocks). It has a formatting toolbar, continues lists, checkboxes and quotes on Enter, and autosaves (debounced, and flushed when you leave the note).
+- **Note links**: every note has a stable id in a hidden front-matter header. Type `@` to open a popup listing all
+  notes (title, full path and id with a copy button), filter by title, path or id, and insert a
+  `[Title](marknotes:<id>)` link. Clicking a link in the preview opens the note; links to missing notes are marked broken.
+- **Images**: insert PNG, JPEG, GIF or WebP images from the toolbar, by pasting or by drag-and-drop. Images are
+  downscaled to 2048 px, stored once in the root `attachments/` folder (named by their SHA-256) and synced to every
+  drive. **Settings → Clean unused images** deletes images no note references.
 - **Appearance**: theme System, Light or Dark, and an accent colour from 8 palettes.
 - **Multi-drive two-way sync** with any number of Proton Drive, Dropbox and OneDrive accounts. Sync runs on launch and
   on **Sync now** (no background polling). It keeps per-drive state and the `.marknotes/manifest.json` manifest, and merges lines
   three-way against the last synced version. Conflicts are resolved per change: Mine, Theirs, Both, Neither, or edit by hand.
+  Images are binary and immutable: they are uploaded, downloaded and deleted, never merged.
 - **Proton login**: SRP password login with TOTP. CAPTCHA/human verification, two-password mode and FIDO2-only
   accounts are not supported.
 - **Dropbox / OneDrive login**: OAuth 2 PKCE (Dropbox) and MSAL (OneDrive) in the system browser, with a loopback redirect.
 - Tokens are encrypted with Electron `safeStorage` (OS keychain).
 
-Out of scope: search, tags, attachments, background sync, local encryption.
+The file format shared with the Android and web apps is described in [docs/note-format.md](docs/note-format.md).
+
+Out of scope: search, tags, background sync, local encryption.
 
 ## Development
 
@@ -169,6 +178,13 @@ The desktop app reuses the Dropbox and Entra apps of the Android app. The full g
   only on launch and on demand;
 - no Proton logos or branding;
 - the login screen states: "This is a third-party application not officially supported by Proton."
+
+## Branding
+
+The app icon is shared with the Android and web apps. The master SVGs live in `branding/` (`marknotes-icon.svg` for
+the app icon, `marknotes-mark.svg` for the in-app logo). The rasters in `build/` (`icon.png`, `icon.ico`, `icon.icns`
+and `icons/<size>.png` for Linux) are generated from them and committed; after changing an SVG run
+`npm i --no-save @resvg/resvg-js && node branding/generate-icons.mjs`.
 
 ## License
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { NoteEntry } from '../../../shared/noteStore';
 import * as P from '../../../shared/paths';
+import logo from '../../../../branding/marknotes-mark.svg';
 import type { Page } from '../App';
 import { ConfirmDialog, Dialog, NameDialog } from './Dialog';
 import { Editor } from './Editor';
@@ -84,7 +85,10 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
   return (
     <div className="app" style={props.hidden ? { display: 'none' } : undefined}>
       <div className="topbar">
-        <h1>MarkNotes</h1>
+        <h1>
+          <img src={logo} alt="" className="logo" />
+          MarkNotes
+        </h1>
         <button className="filled" data-testid="new-note" onClick={() => setDialog({ kind: 'newNote' })}>
           New note
         </button>
@@ -188,7 +192,7 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
           </div>
         </section>
         {openNote ? (
-          <Editor key={openNote} path={openNote} onClose={() => setOpenNote(null)} />
+          <Editor key={openNote} path={openNote} onClose={() => setOpenNote(null)} onOpenNote={setOpenNote} />
         ) : (
           <div className="editor-pane">
             <div className="empty">Select a note or create a new one.</div>

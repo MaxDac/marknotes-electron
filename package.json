@@ -105,12 +105,14 @@
         "deb"
       ],
       "category": "Office",
-      "maintainer": "MaxDac"
+      "maintainer": "MaxDac",
+      "icon": "build/icons"
     },
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "artifactName": "${productName}-Setup-${version}.${ext}"
@@ -121,6 +123,7 @@
         "zip"
       ],
       "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     }
   },
