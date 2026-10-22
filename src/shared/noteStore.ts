@@ -1,4 +1,5 @@
 import { isInAttachments } from './attachments';
+import { newChordSequenceContent } from './chords';
 import { newNoteContent } from './frontMatter';
 import * as P from './paths';
 
@@ -184,14 +185,19 @@ export class NoteStore {
   }
 
   /** Creates an empty note with a fresh id named `noteName` (".md" appended if missing) and returns its path. */
-  async createNote(folder: string, noteName: string): Promise<string> {
+  async createNote(folder: string, noteName: string, content: string = newNoteContent()): Promise<string> {
     const trimmed = noteName.trim();
     P.validateName(trimmed);
     const fileName = P.isNote(trimmed) ? trimmed : trimmed + P.NOTE_EXTENSION;
     const path = P.join(P.normalize(folder), fileName);
     if (await this.exists(path)) throw new Error(`"${fileName}" already exists`);
-    await this.write(path, newNoteContent());
+    await this.write(path, content);
     return path;
+  }
+
+  /** Creates an empty chord sequence (a note with `type: chords`) and returns its path. */
+  async createChordSequence(folder: string, noteName: string): Promise<string> {
+    return this.createNote(folder, noteName, newChordSequenceContent());
   }
 
   /** Creates a folder named `folderName` inside `folder` and returns its path. */
