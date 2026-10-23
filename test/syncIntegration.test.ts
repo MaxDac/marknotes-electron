@@ -2,7 +2,7 @@ import { parseManifest, readId } from '@marknotes/sync';
 import { describe, expect, it } from 'vitest';
 import { ConflictMergeBack } from '../src/shared/conflictMergeBack';
 import { FakeRemoteDriveStore } from '../src/shared/fakeRemote';
-import { utf8 } from '../src/shared/hashing';
+import { sha256Hex, utf8 } from '../src/shared/hashing';
 import { MultiDriveSync, type DriveSyncTarget } from '../src/shared/multiDriveSync';
 import { MemoryNodeBackend, NoteStore } from '../src/shared/noteStore';
 import { InMemoryBaseContentStore, InMemorySyncMetadataStore } from '../src/shared/types';
@@ -47,7 +47,8 @@ describe('sync integration', () => {
     const desktop = new Device('desktop', clock, drives);
 
     await laptop.notes.write('Work/plan.md', '---\nid: abcd1234\n---\n# Plan\none\ntwo\nthree\n');
-    await laptop.notes.writeBytes(`attachments/${'a'.repeat(64)}.png`, utf8.encode('png bytes'));
+    const png = `attachments/${await sha256Hex(utf8.encode('png bytes'))}.png`;
+    await laptop.notes.writeBytes(png, utf8.encode('png bytes'));
     await laptop.run();
     await desktop.run();
     expect(await desktop.tree()).toEqual(await laptop.tree());
@@ -82,7 +83,7 @@ describe('sync integration', () => {
 
     const expected = {
       'Work/plan.md': '---\nid: abcd1234\n---\n# Plan\nONE\ntwo\nthree desktop and laptop\n',
-      [`attachments/${'a'.repeat(64)}.png`]: 'png bytes',
+      [png]: 'png bytes',
     };
     expect(await laptop.tree()).toEqual(expected);
     expect(await desktop.tree()).toEqual(expected);

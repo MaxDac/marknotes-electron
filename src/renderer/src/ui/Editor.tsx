@@ -6,7 +6,7 @@ import { EditorSelection, EditorState, Prec } from '@codemirror/state';
 import { EditorView, keymap, placeholder, type ViewUpdate } from '@codemirror/view';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { IMAGE_TYPES, imageMarkdown } from '../../../shared/attachments';
-import { splitFrontMatter } from '../../../shared/frontMatter';
+import { joinFrontMatter, splitFrontMatter } from '../../../shared/frontMatter';
 import * as E from '../../../shared/markdownEditing';
 import {
   buildNoteIndex,
@@ -135,7 +135,7 @@ export function Editor(props: {
   /** A banner shown above the editor. */
   notice?: ReactNode;
 }) {
-  const { notes } = useApp();
+  const { notes, sync } = useApp();
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -238,10 +238,15 @@ export function Editor(props: {
           // Re-read the header: another component may have changed the id meanwhile (duplicate ids).
           const stored = await notes.read(props.path).then(splitFrontMatter, () => null);
           if (stored?.frontMatter) frontMatter = stored.frontMatter;
-          await notes.write(props.path, frontMatter + body);
+          await notes.write(props.path, joinFrontMatter(frontMatter, body));
         })
         .catch((e) => setError(errorMessage(e)));
     };
+    // A sync waits for pending edits, so it never plans against a stale copy of this note.
+    const unregisterFlush = sync.onBeforeSync(() => {
+      flush();
+      return writes;
+    });
 
     const keys = Prec.highest(
       keymap.of([
@@ -387,12 +392,13 @@ export function Editor(props: {
     return () => {
       disposed = true;
       unsubscribe();
+      unregisterFlush();
       window.removeEventListener('blur', onBlur);
       flush();
       view.current?.destroy();
       view.current = null;
     };
-  }, [notes, props.path, updateMention, closeMention]);
+  }, [notes, sync, props.path, updateMention, closeMention]);
 
   const openLinkedNote = useCallback(
     (id: string) => {

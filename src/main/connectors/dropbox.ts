@@ -1,5 +1,6 @@
 import { MANIFEST_PATH } from '../../shared/manifestPath';
 import {
+  RemoteChangedError,
   RemoteUnavailableError,
   syncFolder,
   type DriveAccount,
@@ -148,6 +149,8 @@ interface Metadata {
   path_display?: string;
   rev?: string;
   server_modified?: string;
+  /** Modification time set by the uploading client: the note's local edit time. */
+  client_modified?: string;
 }
 
 interface ListFolderResult {
@@ -286,7 +289,7 @@ export class DropboxDriveStore implements RemoteDriveStore {
           id: metadata.id ?? '',
           isFolder: false,
           version: metadata.rev ?? '',
-          modifiedMillis: parseTime(metadata.server_modified),
+          modifiedMillis: parseTime(metadata.client_modified ?? metadata.server_modified),
         };
       case 'folder':
         return { path: relative, id: metadata.id ?? '', isFolder: true, version: '', modifiedMillis: 0 };
@@ -307,18 +310,28 @@ export class DropboxDriveStore implements RemoteDriveStore {
     return this.client.download('files/download', { path: entry.id });
   }
 
-  uploadNew(path: string, bytes: Uint8Array): Promise<RemoteEntry> {
-    return this.upload(path, bytes, 'add');
+  uploadNew(path: string, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
+    return this.upload(path, bytes, 'add', modifiedMillis);
   }
 
-  uploadRevision(entry: RemoteEntry, bytes: Uint8Array): Promise<RemoteEntry> {
-    return this.upload(entry.path, bytes, { '.tag': 'update', update: entry.version });
+  uploadRevision(entry: RemoteEntry, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
+    return this.upload(entry.path, bytes, { '.tag': 'update', update: entry.version }, modifiedMillis);
   }
 
-  private async upload(path: string, bytes: Uint8Array, mode: string | Tagged): Promise<RemoteEntry> {
+  private async upload(
+    path: string,
+    bytes: Uint8Array,
+    mode: string | Tagged,
+    modifiedMillis?: number,
+  ): Promise<RemoteEntry> {
     const metadata = await this.client.upload<Metadata>(
       'files/upload',
-      { path: this.absolute(path), mode, autorename: false },
+      {
+        path: this.absolute(path),
+        mode,
+        autorename: false,
+        ...(modifiedMillis ? { client_modified: dropboxTime(modifiedMillis) } : {}),
+      },
       bytes,
     );
     return this.remember(metadata, 'file');
@@ -339,13 +352,28 @@ export class DropboxDriveStore implements RemoteDriveStore {
     return this.remember(metadata, 'folder');
   }
 
+  /** Files are deleted by id and only at the planned revision (`parent_rev`). */
   async delete(entry: RemoteEntry): Promise<void> {
+    const conditional = !entry.isFolder && entry.version !== '';
+    const path = this.absolute(entry.path);
     try {
-      await this.client.rpc('files/delete_v2', { path: this.absolute(entry.path) });
+      await this.client.rpc('files/delete_v2', conditional ? { path, parent_rev: entry.version } : { path });
     } catch (e) {
       if (!(e instanceof DropboxError && e.is('path_lookup', 'not_found'))) throw e;
+      if (conditional && (await this.currentRev(path)) !== null) throw new RemoteChangedError(entry.path);
     }
     this.removeTree(entry.path.toLowerCase());
+  }
+
+  /** The current revision of the file at `path`, null when it no longer exists. */
+  private async currentRev(path: string): Promise<string | null> {
+    try {
+      const metadata = await this.client.rpc<Metadata>('files/get_metadata', { path });
+      return metadata['.tag'] === 'deleted' ? null : (metadata.rev ?? '');
+    } catch (e) {
+      if (e instanceof DropboxError && e.is('path', 'not_found')) return null;
+      throw e;
+    }
   }
 
   async readManifest(): Promise<Uint8Array | null> {
@@ -370,6 +398,9 @@ function parseTime(value: string | undefined): number {
   const time = value ? Date.parse(value) : NaN;
   return Number.isNaN(time) ? 0 : time;
 }
+
+/** Dropbox timestamps are "%Y-%m-%dT%H:%M:%SZ", without milliseconds. */
+export const dropboxTime = (millis: number) => new Date(millis).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 /** What is stored in the vault for a Dropbox account. */
 export interface DropboxCredential {

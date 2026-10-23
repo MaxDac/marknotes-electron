@@ -127,4 +127,17 @@ describe('NoteStore', () => {
     await expect(store.move('b/n.md', 'missing')).rejects.toThrow('Folder missing does not exist');
     expect(await store.read('b/n.md')).toBe('y');
   });
+
+  it('rename and move never enter the reserved attachments folder', async () => {
+    await store.write('n.md', 'x');
+    await store.write('a/m.md', 'y');
+    await store.createFolder('attachments');
+
+    expect(await store.rename('n.md', 'attachments')).toBe('attachments.md');
+    await expect(store.rename('a', 'attachments')).rejects.toThrow('reserved for images');
+    await expect(store.move('attachments.md', 'attachments')).rejects.toThrow('reserved for images');
+    await expect(store.move('a', 'attachments')).rejects.toThrow('reserved for images');
+    expect(await store.read('attachments.md')).toBe('x');
+    expect(await store.read('a/m.md')).toBe('y');
+  });
 });

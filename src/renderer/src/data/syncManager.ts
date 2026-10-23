@@ -29,6 +29,7 @@ interface StoredStatus {
 }
 
 const statusKey = (id: string) => `driveStatus:${id}`;
+const CONFLICTS_KEY = 'pendingConflicts';
 
 /**
  * Keeps the local notes in sync with every connected drive. Sync only runs on app launch and on demand:
@@ -41,6 +42,7 @@ export class SyncManager {
   private multiSync: MultiDriveSync;
   private mergeBack: ConflictMergeBack;
   private providers: ProviderInfo[] = [];
+  private readonly flushers = new Set<() => Promise<void>>();
 
   constructor(
     notes: NoteStore,
@@ -62,8 +64,17 @@ export class SyncManager {
   }
 
   private update(patch: Partial<SyncState>) {
+    const conflictsChanged = patch.conflicts !== undefined && patch.conflicts !== this.state.conflicts;
     this.state = { ...this.state, ...patch };
     for (const l of this.listeners) l(this.state);
+    // Pending conflicts survive restarts, until resolved or one of the files is gone.
+    if (conflictsChanged) void this.settings.set(CONFLICTS_KEY, this.state.conflicts).catch(() => undefined);
+  }
+
+  /** Registers a pending-save flush (e.g. an open editor) awaited before every sync; returns an unregister. */
+  onBeforeSync(flush: () => Promise<void>): () => void {
+    this.flushers.add(flush);
+    return () => this.flushers.delete(flush);
   }
 
   /** Serializes sync, merge-back and disconnect operations. */
@@ -75,8 +86,9 @@ export class SyncManager {
 
   async init() {
     const message = await this.settings.get<string>('lastSyncSummary', '');
+    const stored = await this.settings.get<SyncConflict[]>(CONFLICTS_KEY, []);
     this.providers = await unwrap(api().providers());
-    this.update({ message: message || null });
+    this.update({ message: message || null, conflicts: await this.pendingConflicts(stored) });
     await this.refreshDrives();
   }
 
@@ -187,6 +199,8 @@ export class SyncManager {
     }
     this.update({ running: true, message: 'Syncing…' });
     try {
+      // Pending editor saves land before the local tree is listed.
+      await Promise.all([...this.flushers].map((flush) => flush().catch(() => undefined)));
       const messages = new Map<string, string>();
       const targets: DriveSyncTarget[] = [];
       for (const account of drives) {

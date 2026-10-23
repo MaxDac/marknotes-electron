@@ -27,6 +27,16 @@ describe('note ids', () => {
 });
 
 describe('front-matter', () => {
+  it('re-attaching a header without a final line break inserts one', () => {
+    expect(joinFrontMatter('---\nid: k7f3q2xa\n---', 'Hello')).toBe('---\nid: k7f3q2xa\n---\nHello');
+    expect(joinFrontMatter('---\r\nid: k7f3q2xa\r\n---', 'Hello\r\n')).toBe(
+      '---\r\nid: k7f3q2xa\r\n---\r\nHello\r\n',
+    );
+    expect(joinFrontMatter('---\nid: k7f3q2xa\n---', '')).toBe('---\nid: k7f3q2xa\n---');
+    expect(joinFrontMatter('---\nid: k7f3q2xa\n---\n', 'Hello')).toBe('---\nid: k7f3q2xa\n---\nHello');
+    expect(joinFrontMatter('', 'Hello')).toBe('Hello');
+  });
+
   it('splits the header from the body', () => {
     const text = '---\nid: k7f3q2xa\ntags: [a]\n---\n# Title\n';
     expect(splitFrontMatter(text)).toEqual({

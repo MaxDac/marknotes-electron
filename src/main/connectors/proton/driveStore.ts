@@ -1,6 +1,7 @@
 import { MANIFEST_DIRECTORY, MANIFEST_PATH } from '../../../shared/manifestPath';
 import { isAncestor, join, name as baseName, normalize, parent as parentPath } from '../../../shared/paths';
-import type { RemoteDriveStore, RemoteEntry } from '../../../shared/types';
+import { typeForPath } from '../../../shared/attachments';
+import { RemoteChangedError, type RemoteDriveStore, type RemoteEntry } from '../../../shared/types';
 import type { DriveClient, FileUploader, NodeEntity, UploadMetadata } from './sdk';
 
 export const MEDIA_TYPE = 'text/markdown';
@@ -57,14 +58,14 @@ export class ProtonDriveStore implements RemoteDriveStore {
     return this.downloadNode(entry.id);
   }
 
-  async uploadNew(path: string, bytes: Uint8Array): Promise<RemoteEntry> {
+  async uploadNew(path: string, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
     const normalized = normalize(path);
     const parent = await this.ensureFolder(parentPath(normalized));
-    const now = this.now();
+    const now = modifiedMillis || this.now();
     const uploader = await this.client.getFileUploader(
       parent,
       baseName(normalized),
-      this.metadata(bytes, now),
+      this.metadata(bytes, now, normalized),
     );
     const result = await this.upload(uploader, bytes);
     const entry: RemoteEntry = {
@@ -78,9 +79,12 @@ export class ProtonDriveStore implements RemoteDriveStore {
     return { ...entry };
   }
 
-  async uploadRevision(entry: RemoteEntry, bytes: Uint8Array): Promise<RemoteEntry> {
-    const now = this.now();
-    const uploader = await this.client.getFileRevisionUploader(entry.id, this.metadata(bytes, now));
+  async uploadRevision(entry: RemoteEntry, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
+    const now = modifiedMillis || this.now();
+    const uploader = await this.client.getFileRevisionUploader(
+      entry.id,
+      this.metadata(bytes, now, entry.path),
+    );
     const result = await this.upload(uploader, bytes);
     const updated: RemoteEntry = { ...entry, version: result.nodeRevisionUid, modifiedMillis: now };
     this.entries.set(entry.path, updated);
@@ -95,7 +99,13 @@ export class ProtonDriveStore implements RemoteDriveStore {
     return { ...entry };
   }
 
+  /** Files are only trashed while their active revision is still the planned one. */
   async delete(entry: RemoteEntry): Promise<void> {
+    if (!entry.isFolder && entry.version !== '') {
+      const node = await this.client.getNode(entry.id);
+      if (!node.trashTime && node.activeRevision?.uid !== entry.version)
+        throw new RemoteChangedError(entry.path);
+    }
     for await (const result of this.client.trashNodes([entry.id])) {
       if (!result.ok) throw new Error(`Could not trash ${entry.path}: ${result.error.message}`);
     }
@@ -120,7 +130,7 @@ export class ProtonDriveStore implements RemoteDriveStore {
     folder ??= await this.client.createFolder(root, MANIFEST_DIRECTORY);
     const existing = await this.findChild(folder.uid, MANIFEST_FILE_NAME);
     const metadata: UploadMetadata = {
-      ...this.metadata(bytes, this.now()),
+      ...this.metadata(bytes, this.now(), MANIFEST_PATH),
       mediaType: MANIFEST_MEDIA_TYPE,
     };
     const uploader = existing
@@ -129,11 +139,12 @@ export class ProtonDriveStore implements RemoteDriveStore {
     await this.upload(uploader, bytes);
   }
 
-  private metadata(bytes: Uint8Array, now: number): UploadMetadata {
+  /** Notes are uploaded as text/markdown, attachments with their image type. */
+  private metadata(bytes: Uint8Array, modified: number, path: string): UploadMetadata {
     return {
-      mediaType: MEDIA_TYPE,
+      mediaType: typeForPath(path) ?? MEDIA_TYPE,
       expectedSize: bytes.length,
-      modificationTime: new Date(now),
+      modificationTime: new Date(modified),
       overrideExistingDraftByOtherClient: false,
     };
   }
@@ -211,8 +222,11 @@ export class ProtonDriveStore implements RemoteDriveStore {
     const folders: { uid: string; path: string }[] = [];
     for await (const node of this.client.iterateFolderChildren(folderUid)) {
       const name = nameOf(node);
-      // Undecryptable names, trashed nodes and hidden (dot) entries such as the manifest are skipped.
-      if (name === null || node.trashTime || name.startsWith('.')) continue;
+      // Trashed nodes and hidden (dot) entries such as the manifest are skipped. An entry whose name can't be
+      // decrypted fails the snapshot: treating it as absent would delete it locally.
+      if (node.trashTime) continue;
+      if (name === null) throw new Error(`Couldn't decrypt the name of an entry in /${path}`);
+      if (name.startsWith('.')) continue;
       const childPath = join(path, name);
       if (isFolder(node)) {
         this.entries.set(childPath, {

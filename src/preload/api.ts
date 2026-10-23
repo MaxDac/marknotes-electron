@@ -28,8 +28,8 @@ export interface AddDriveOptions {
 export type RemoteOp =
   | { op: 'snapshot' }
   | { op: 'download'; entry: RemoteEntry }
-  | { op: 'uploadNew'; path: string; bytes: Uint8Array }
-  | { op: 'uploadRevision'; entry: RemoteEntry; bytes: Uint8Array }
+  | { op: 'uploadNew'; path: string; bytes: Uint8Array; modifiedMillis?: number }
+  | { op: 'uploadRevision'; entry: RemoteEntry; bytes: Uint8Array; modifiedMillis?: number }
   | { op: 'createFolder'; path: string }
   | { op: 'delete'; entry: RemoteEntry }
   | { op: 'readManifest' }

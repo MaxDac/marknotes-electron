@@ -14,7 +14,7 @@ import {
   type MsalTokenCache,
 } from '../src/main/connectors/onedrive';
 import type { SecretVault } from '../src/main/connectors/types';
-import { RemoteUnavailableError, type DriveAccount } from '../src/shared/types';
+import { RemoteChangedError, RemoteUnavailableError, type DriveAccount } from '../src/shared/types';
 
 interface Recorded {
   method: string;
@@ -189,6 +189,44 @@ describe('OneDriveDriveStore', () => {
     await store.delete(entries.get('Todo.md')!);
     server.route('DELETE /v1.0/me/drive/items/n1', '{"error":{"message":"locked"}}', 423);
     await expect(store.delete(entries.get('Todo.md')!)).rejects.toThrow('OneDrive error 423: locked');
+  });
+
+  it('a failed full traversal keeps no delta link, so the next snapshot traverses again', async () => {
+    server.route('GET /v1.0/me/drive/items/f1/children', '{"error":{"message":"busy"}}', 503);
+    await expect(store.snapshot()).rejects.toThrow(/503/);
+    server.route('GET /v1.0/me/drive/items/f1/children', `{"value":[${file('n2', 'Plan.md', 'f1', 'c2')}]}`);
+    expect((await store.snapshot()).map((e) => e.path).sort()).toEqual(['Todo.md', 'Work', 'Work/Plan.md']);
+    expect(server.requests.some((r) => r.path === '/v1.0/delta1')).toBe(false);
+  });
+
+  it('deletes files only at the synced eTag', async () => {
+    const entries = new Map((await store.snapshot()).map((e) => [e.path, e]));
+    server.route('DELETE /v1.0/me/drive/items/n2', '{"error":{"message":"changed"}}', 412);
+    await expect(store.delete(entries.get('Work/Plan.md')!)).rejects.toBeInstanceOf(RemoteChangedError);
+    expect(server.requests.at(-1)!.headers['if-match']).toBe('e-c2');
+    server.route('DELETE /v1.0/me/drive/items/f1', '', 204);
+    await store.delete(entries.get('Work')!);
+    expect(server.requests.at(-1)!.headers['if-match']).toBeUndefined();
+  });
+
+  it('writes and reads the local modification time as fileSystemInfo.lastModifiedDateTime', async () => {
+    await store.snapshot();
+    server.route(
+      'PUT /v1.0/me/drive/items/root:/New.md:/content?@microsoft.graph.conflictBehavior=fail',
+      file('n5', 'New.md', 'root', 'c6'),
+    );
+    server.route(
+      'PATCH /v1.0/me/drive/items/n5',
+      file('n5', 'New.md', 'root', 'c7').slice(0, -1) +
+        ',"fileSystemInfo":{"lastModifiedDateTime":"2023-05-06T07:08:09Z"}}',
+    );
+    const created = await store.uploadNew('New.md', bytes('x'), Date.parse('2023-05-06T07:08:09Z'));
+    const patch = server.requests.at(-1)!;
+    expect(patch.method).toBe('PATCH');
+    expect(JSON.parse(patch.body)).toEqual({
+      fileSystemInfo: { lastModifiedDateTime: '2023-05-06T07:08:09.000Z' },
+    });
+    expect(created).toMatchObject({ version: 'c7', modifiedMillis: Date.parse('2023-05-06T07:08:09Z') });
   });
 
   it('downloads content by item id', async () => {

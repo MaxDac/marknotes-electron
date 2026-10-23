@@ -11,6 +11,7 @@ import {
 import { MANIFEST_PATH } from '../../shared/manifestPath';
 import { isAncestor, join } from '../../shared/paths';
 import {
+  RemoteChangedError,
   RemoteUnavailableError,
   syncFolder,
   type DriveAccount,
@@ -34,6 +35,7 @@ export const ONEDRIVE_SCOPES = ['Files.ReadWrite', 'User.Read', 'offline_access'
 const HTTP_NOT_FOUND = 404;
 const HTTP_CONFLICT = 409;
 const HTTP_GONE = 410;
+const HTTP_PRECONDITION_FAILED = 412;
 
 type Json = Record<string, unknown>;
 
@@ -137,8 +139,12 @@ export class GraphClient {
   }
 
   async postJson(url: string, body: Json): Promise<Json> {
+    return this.sendJson('POST', url, body);
+  }
+
+  async sendJson(method: string, url: string, body: Json): Promise<Json> {
     return GraphClient.json(
-      await this.send('POST', url, { bytes: JSON.stringify(body), contentType: 'application/json' }),
+      await this.send(method, url, { bytes: JSON.stringify(body), contentType: 'application/json' }),
     );
   }
 
@@ -227,7 +233,11 @@ export class OneDriveDriveStore implements RemoteDriveStore {
         await this.applyDelta(link);
       } catch (e) {
         // 410 Gone: the delta token expired, start over.
-        if (!(e instanceof GraphError && e.httpStatus === HTTP_GONE)) throw e;
+        if (!(e instanceof GraphError && e.httpStatus === HTTP_GONE)) {
+          // The cache may be partly updated: traverse again next time.
+          this.deltaLink = null;
+          throw e;
+        }
         await this.fullTraversal(root);
       }
     }
@@ -238,20 +248,30 @@ export class OneDriveDriveStore implements RemoteDriveStore {
     return this.graph.send('GET', this.graph.itemUrl(entry.id, '/content'));
   }
 
-  async uploadNew(path: string, bytes: Uint8Array): Promise<RemoteEntry> {
+  async uploadNew(path: string, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
     const url =
       this.graph.childPathUrl(await this.ensureRoot(), path, '/content') +
       '?@microsoft.graph.conflictBehavior=fail';
-    return this.remember(await this.graph.putContent(url, bytes), path);
+    return this.remember(
+      await this.withModified(await this.graph.putContent(url, bytes), modifiedMillis),
+      path,
+    );
   }
 
-  async uploadRevision(entry: RemoteEntry, bytes: Uint8Array): Promise<RemoteEntry> {
+  async uploadRevision(entry: RemoteEntry, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
     const eTag = this.byId.get(entry.id)?.eTag;
     const headers: Record<string, string> = eTag ? { 'If-Match': eTag } : {};
-    return this.remember(
-      await this.graph.putContent(this.graph.itemUrl(entry.id, '/content'), bytes, headers),
-      entry.path,
-    );
+    const item = await this.graph.putContent(this.graph.itemUrl(entry.id, '/content'), bytes, headers);
+    return this.remember(await this.withModified(item, modifiedMillis), entry.path);
+  }
+
+  /** Stores the local edit time as `fileSystemInfo.lastModifiedDateTime`, which snapshots read back. */
+  private async withModified(item: Json, modifiedMillis: number | undefined): Promise<Json> {
+    const id = str(item, 'id');
+    if (!modifiedMillis || id === null) return item;
+    return this.graph.sendJson('PATCH', this.graph.itemUrl(id), {
+      fileSystemInfo: { lastModifiedDateTime: new Date(modifiedMillis).toISOString() },
+    });
   }
 
   async createFolder(path: string): Promise<RemoteEntry> {
@@ -271,10 +291,20 @@ export class OneDriveDriveStore implements RemoteDriveStore {
     return result;
   }
 
+  /** Files are only deleted while their eTag is the snapshot's (If-Match); 412 means it changed meanwhile. */
   async delete(entry: RemoteEntry): Promise<void> {
+    const eTag = entry.isFolder ? undefined : this.byId.get(entry.id)?.eTag;
     try {
-      await this.graph.send('DELETE', this.graph.itemUrl(entry.id));
+      await this.graph.send(
+        'DELETE',
+        this.graph.itemUrl(entry.id),
+        undefined,
+        eTag ? { 'If-Match': eTag } : {},
+      );
     } catch (e) {
+      if (e instanceof GraphError && e.httpStatus === HTTP_PRECONDITION_FAILED) {
+        throw new RemoteChangedError(entry.path);
+      }
       if (!(e instanceof GraphError && e.httpStatus === HTTP_NOT_FOUND)) throw e;
     }
     this.removeTree(entry.id);
@@ -351,12 +381,22 @@ export class OneDriveDriveStore implements RemoteDriveStore {
     return parent;
   }
 
+  /**
+   * Lists the whole synced folder. The delta link is taken first (changes made during the traversal are replayed by
+   * the next delta) but only kept once the traversal succeeded: a snapshot is complete or it fails.
+   */
   private async fullTraversal(root: string) {
     this.byId.clear();
-    // Take the delta token first: changes made during the traversal are replayed by the next delta.
-    const latest = await this.graph.getJson(this.graph.pathUrl('', '/delta') + '?token=latest');
-    this.deltaLink = str(latest, '@odata.deltaLink');
-    await this.traverse(root, '');
+    this.deltaLink = null;
+    try {
+      const latest = await this.graph.getJson(this.graph.pathUrl('', '/delta') + '?token=latest');
+      const link = str(latest, '@odata.deltaLink');
+      await this.traverse(root, '');
+      this.deltaLink = link;
+    } catch (e) {
+      this.byId.clear();
+      throw e;
+    }
   }
 
   private async traverse(folderId: string, path: string) {
@@ -436,7 +476,9 @@ export class OneDriveDriveStore implements RemoteDriveStore {
       id,
       isFolder,
       version: isFolder ? '' : (str(item, 'cTag') ?? str(item, 'eTag') ?? ''),
-      modifiedMillis: parseTime(str(item, 'lastModifiedDateTime')),
+      modifiedMillis: parseTime(
+        str(obj(item, 'fileSystemInfo') ?? {}, 'lastModifiedDateTime') ?? str(item, 'lastModifiedDateTime'),
+      ),
     };
     this.byId.set(id, { entry, eTag: str(item, 'eTag') ?? '' });
     return entry;

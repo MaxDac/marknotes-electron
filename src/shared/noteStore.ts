@@ -146,17 +146,32 @@ export class NoteStore {
     await this.writeBytes(path, new TextEncoder().encode(content));
   }
 
-  /** Writes a note, creating parent folders as needed. */
-  async writeBytes(path: string, bytes: Uint8Array): Promise<void> {
+  /**
+   * Writes a note, creating parent folders as needed. `modifiedMillis` (default: now) is the modification time
+   * to keep, e.g. the drive's time for a downloaded file.
+   */
+  async writeBytes(path: string, bytes: Uint8Array, modifiedMillis?: number): Promise<void> {
     const p = P.normalize(path);
     if (p === '') throw new Error('Cannot write to the root folder');
     const existing = await this.backend.get(p);
     if (existing?.isFolder) throw new Error(`${path} is a folder`);
     const now = this.clock();
     const puts = await this.missingFolders(P.parent(p), now);
-    puts.push({ path: p, isFolder: false, modifiedMillis: now, size: bytes.byteLength, content: bytes });
+    puts.push({
+      path: p,
+      isFolder: false,
+      modifiedMillis: modifiedMillis ?? now,
+      size: bytes.byteLength,
+      content: bytes,
+    });
     await this.backend.apply(puts, []);
     this.changed();
+  }
+
+  /** The entry at `path`, or undefined when missing (hidden entries included). */
+  async entry(path: string): Promise<NoteEntry | undefined> {
+    const node = await this.backend.get(P.normalize(path));
+    return node && toEntry(node);
   }
 
   private async missingFolders(folder: string, now: number): Promise<StoredNode[]> {
@@ -220,6 +235,7 @@ export class NoteStore {
     const finalName = !source.isFolder && !P.isNote(trimmed) ? trimmed + P.NOTE_EXTENSION : trimmed;
     const newPath = P.join(P.parent(p), finalName);
     if (newPath === p) return newPath;
+    if (isInAttachments(newPath)) throw new Error(`"${finalName}" is reserved for images`);
     if (await this.backend.get(newPath)) throw new Error(`"${finalName}" already exists`);
     await this.relocate(p, newPath);
     return newPath;
@@ -238,6 +254,9 @@ export class NoteStore {
     }
     const newPath = P.join(target, P.name(p));
     if (newPath === p) return newPath;
+    if (isInAttachments(newPath)) {
+      throw new Error('The attachments folder is reserved for images');
+    }
     if (await this.backend.get(newPath)) {
       throw new Error(`"${P.name(p)}" already exists in the destination`);
     }
