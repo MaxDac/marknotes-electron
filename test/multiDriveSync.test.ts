@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { FakeRemoteDriveStore } from '../src/shared/fakeRemote';
+import { isNoteId, noteIdOf } from '../src/shared/frontMatter';
 import {
   MultiDriveSync,
   type DriveSyncTarget,
@@ -114,10 +115,14 @@ describe('MultiDriveSync', () => {
     const copy = 'n (conflicted copy).md';
     expect(conflicts.map((c) => [c.driveId, c.copyPath, c.winner])).toEqual([['b', copy, 'remote']]);
     expect(await local.read('n.md')).toBe('from b\n');
-    expect(await local.read(copy)).toBe('from a\n');
+    // The conflicted copy gets a fresh note id.
+    const copyText = await local.read(copy);
+    const copyId = noteIdOf(copyText) ?? '';
+    expect(isNoteId(copyId)).toBe(true);
+    expect(copyText).toBe(`---\nid: ${copyId}\n---\nfrom a\n`);
     for (const drive of [driveA, driveB]) {
       expect(drive.content('n.md')).toBe('from b\n');
-      expect(drive.content(copy)).toBe('from a\n');
+      expect(drive.content(copy)).toBe(copyText);
     }
     expect((await syncAll()).conflicts).toEqual([]);
   });
