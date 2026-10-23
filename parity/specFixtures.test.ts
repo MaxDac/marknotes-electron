@@ -1,3 +1,15 @@
+import {
+  buildManifest,
+  conflictCopyName,
+  merge3,
+  mergeText,
+  parseManifest,
+  plan,
+  reconcile,
+  serializeManifest,
+  SyncScheduler,
+  type ConflictChoice,
+} from '@marknotes/sync';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -18,15 +30,14 @@ import {
   type ChordSequence,
 } from '../src/shared/chords';
 import { isNoteId, noteIdOf, splitFrontMatter, withNoteId } from '../src/shared/frontMatter';
-import { SyncManifest, type ManifestEntry } from '../src/shared/manifest';
-import { merge3, type ConflictChoice } from '../src/shared/merge';
+
 import { buildNoteIndex, filterNotes, findMention, noteIdFromHref, noteLink } from '../src/shared/noteLinks';
 import { MemoryNodeBackend, NoteStore } from '../src/shared/noteStore';
-import { CONFLICT_SUFFIX } from '../src/shared/syncEngine';
 
 /**
  * Runs the shared marknotes-spec golden fixtures (git submodule at spec/) against the desktop implementation.
- * See spec/README.md, "How apps consume this repository".
+ * See spec/README.md, "How apps consume this repository". The sync, manifest and merge fixtures run against the
+ * shared sync core (`@marknotes/sync`), which the desktop sync engine calls.
  */
 
 const APP = 'desktop';
@@ -78,20 +89,11 @@ const runners: Record<string, Runner> = {
   'attachments/scaled-size': ({ width, height }) => scaledSize(width, height),
   'attachments/refs': ({ text }) => ({ refs: [...attachmentRefs(text)].sort() }),
 
-  'manifest/parse': ({ json }) => {
-    const manifest = SyncManifest.parse(json);
-    return {
-      manifest: manifest && {
-        deviceId: manifest.deviceId,
-        updatedAt: manifest.updatedAt,
-        files: manifest.files,
-      },
-    };
-  },
-  'manifest/serialize': ({ deviceId, updatedAt, files }) => ({
-    json: new SyncManifest(deviceId, updatedAt, files as Record<string, ManifestEntry>).toJson(),
+  'manifest/parse': ({ json }) => ({ manifest: parseManifest(json) }),
+  'manifest/serialize': (manifest) => ({ json: serializeManifest(manifest) }),
+  'manifest/build': ({ records, deviceId, nowMillis, previous }) => ({
+    json: buildManifest(records, deviceId, nowMillis, previous) ?? null,
   }),
-
   // The note index gives later duplicates (by sorted path) a new id and saves them.
   'duplicate-ids/resolve': async ({ notes }) => {
     const store = newStore();
@@ -113,16 +115,29 @@ const runners: Record<string, Runner> = {
 
   'merge/merge3': ({ base, local, remote, choices }) => {
     const result = merge3(base, local, remote);
-    const byIndex: Partial<Record<number, ConflictChoice>> = {};
-    for (const [index, choice] of Object.entries((choices ?? {}) as Record<string, ConflictChoice>)) {
-      byIndex[Number(index)] = choice;
-    }
-    return { text: result.text(byIndex), conflicts: result.conflicts.length };
+    const text = choices ? mergeText(result.chunks, choices as Record<number, ConflictChoice>) : result.text;
+    return { text, conflicts: result.conflicts };
   },
-  // The sync engine names the copy with NoteStore.uniqueSibling(path, CONFLICT_SUFFIX).
-  'merge/conflict-copy-name': async ({ path }) => ({
-    path: await newStore().uniqueSibling(path, CONFLICT_SUFFIX),
+  'merge/conflict-copy-name': ({ path, existingPaths }) => ({
+    path: conflictCopyName(path, existingPaths ?? []),
   }),
+
+  'sync/plan': (input) => plan(input),
+  'sync/reconcile': (input) => reconcile(input),
+  'sync/multi-drive': ({ driveIds, maxPasses, reports }) => {
+    const scheduler = new SyncScheduler(driveIds, maxPasses);
+    const order: string[] = [];
+    try {
+      for (let id = scheduler.next(); id !== undefined; id = scheduler.next()) {
+        const report = (reports as { localChanges: number; failed: boolean }[])[order.length];
+        scheduler.report(id, report.localChanges, report.failed);
+        order.push(id);
+      }
+    } finally {
+      scheduler.free();
+    }
+    return { order };
+  },
 };
 
 /**

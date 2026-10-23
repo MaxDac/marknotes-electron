@@ -33,10 +33,11 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-      # Private feeds in the lockfile break Dependabot and fresh clones.
+      # Private feeds in the lockfile break Dependabot and fresh clones. The shared sync core (@marknotes/sync) is the
+      # only exception: it is installed from its GitHub release.
       - name: Check lockfile uses registry.npmjs.org
         run: |
-          bad=$(grep -oE '"resolved": *"[^"]*"' package-lock.json | grep -vE '"resolved": *"https://registry\.npmjs\.org/' || true)
+          bad=$(grep -oE '"resolved": *"[^"]*"' package-lock.json | grep -vE '"resolved": *"(https://registry\.npmjs\.org/|https://github\.com/MaxDac/marknotes-sync/releases/download/)' || true)
           if [ -n "$bad" ]; then
             echo "::error file=package-lock.json::package-lock.json has resolved URLs outside https://registry.npmjs.org/. Regenerate it with the project .npmrc."
             echo "$bad"

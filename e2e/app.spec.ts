@@ -253,7 +253,7 @@ test('@ links to other notes and inserts images', async () => {
   }
 });
 
-test('syncs with a drive and resolves a conflict', async () => {
+test('syncs with a drive and merges a conflicted copy back', async () => {
   const { app, page } = await launch(newUserData());
   await createNote(page, 'Shared');
   await page.getByTestId('editor-field').click();
@@ -290,7 +290,7 @@ test('syncs with a drive and resolves a conflict', async () => {
   await page.getByRole('button', { name: 'Sync now' }).click();
   await expect(page.getByTestId('sync-message')).toContainText('↑0 ↓1');
 
-  // Both sides change the same line: conflict.
+  // Both sides change the same line: the newest version (this device's) is kept, the drive's becomes a copy.
   await remote('put', 'Documents/MarkNotes/Shared.md', `${header}line theirs`);
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByTestId('entry').filter({ hasText: 'Shared' }).click();
@@ -301,14 +301,31 @@ test('syncs with a drive and resolves a conflict', async () => {
   await page.getByRole('button', { name: 'Sync now' }).click();
   await page.getByRole('button', { name: /Sync conflicts/ }).click();
   const conflict = page.getByTestId('conflict');
-  await expect(conflict).toContainText('Changed on this device and on Dropbox (test@example.com).');
-  await conflict.getByRole('button', { name: 'Theirs', exact: true }).click();
-  await conflict.getByRole('button', { name: 'Save merge' }).click();
-  await expect(page.getByText('No conflicts')).toBeVisible();
+  await expect(conflict).toContainText(
+    'Changed on this device and on Dropbox (test@example.com). The newest version (from this device) was kept; ' +
+      'the version from Dropbox (test@example.com) was saved as Shared (conflicted copy).md.',
+  );
   expect(await remote('read', 'Documents/MarkNotes/Shared.md')).toEqual({
     ok: true,
-    value: `${header}line theirs`,
+    value: `${header}line mine`,
   });
+  const copy = await remote('read', 'Documents/MarkNotes/Shared (conflicted copy).md');
+  expect(copy.ok && String(copy.value).endsWith('\n---\nline theirs')).toBe(true);
+  expect(copy.ok && String(copy.value).startsWith(header!)).toBe(false);
+
+  // Merge the copy back, taking its version of the line.
+  await conflict.getByRole('button', { name: 'Merge copy back' }).click();
+  await expect(conflict).toContainText('Kept version');
+  await expect(conflict).toContainText('Conflicted copy');
+  await conflict.getByRole('button', { name: 'Copy', exact: true }).click();
+  await conflict.getByRole('button', { name: 'Save merge' }).click();
+  await expect(page.getByText('No conflicts')).toBeVisible();
+  await expect
+    .poll(() => remote('read', 'Documents/MarkNotes/Shared.md'))
+    .toEqual({ ok: true, value: `${header}line theirs` });
+  await expect
+    .poll(() => remote('read', 'Documents/MarkNotes/Shared (conflicted copy).md'))
+    .toEqual({ ok: true, value: null });
 
   // Disconnect keeps the notes.
   await page.getByRole('button', { name: 'Back' }).click();

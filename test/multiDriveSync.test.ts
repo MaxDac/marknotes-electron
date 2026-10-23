@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { FakeRemoteDriveStore } from '../src/shared/fakeRemote';
 import {
-  allConflicts,
   MultiDriveSync,
-  type DriveSyncOutcome,
   type DriveSyncTarget,
+  type MultiDriveSyncResult,
 } from '../src/shared/multiDriveSync';
 import { MemoryNodeBackend, NoteStore } from '../src/shared/noteStore';
 import {
@@ -14,6 +13,7 @@ import {
 } from '../src/shared/types';
 
 describe('MultiDriveSync', () => {
+  let now: number;
   let local: NoteStore;
   let driveA: FakeRemoteDriveStore;
   let driveB: FakeRemoteDriveStore;
@@ -28,20 +28,22 @@ describe('MultiDriveSync', () => {
   });
 
   beforeEach(() => {
-    local = new NoteStore(new MemoryNodeBackend());
+    now = 1000;
+    local = new NoteStore(new MemoryNodeBackend(), () => now);
     driveA = new FakeRemoteDriveStore();
     driveB = new FakeRemoteDriveStore();
     targets = [target('a', driveA), target('b', driveB)];
-    sync = new MultiDriveSync(local, 'device', undefined, () => 1000);
+    sync = new MultiDriveSync(local, 'device', undefined, () => now);
   });
 
-  async function syncAll(): Promise<DriveSyncOutcome[]> {
-    const outcomes = await sync.sync(targets);
-    for (const o of outcomes) {
+  async function syncAll(): Promise<MultiDriveSyncResult> {
+    const result = await sync.sync(targets);
+    expect(result.outcomes.map((o) => o.driveId)).toEqual(targets.map((t) => t.driveId));
+    for (const o of result.outcomes) {
       expect(o.error).toBeNull();
       expect(o.result!.errors).toEqual([]);
     }
-    return outcomes;
+    return result;
   }
 
   it('local notes are pushed to every drive', async () => {
@@ -91,28 +93,34 @@ describe('MultiDriveSync', () => {
     driveA.putFile('n.md', 'A\nb\nc\n');
     driveB.putFile('n.md', 'a\nb\nC\n');
 
-    const outcomes = await syncAll();
+    const { conflicts } = await syncAll();
 
-    expect(allConflicts(outcomes)).toEqual([]);
+    expect(conflicts).toEqual([]);
     expect(await local.read('n.md')).toBe('A\nb\nC\n');
     expect(driveA.content('n.md')).toBe('A\nb\nC\n');
     expect(driveB.content('n.md')).toBe('A\nb\nC\n');
   });
 
-  it('conflicting edits are reported with their drive', async () => {
+  it('conflicting edits keep the newest version and the copy reaches every drive', async () => {
     await local.write('n.md', 'x\n');
     await syncAll();
-    driveA.putFile('n.md', 'from a\n');
-    driveB.putFile('n.md', 'from b\n');
+    driveA.put('n.md', 'from a\n', 2000);
+    driveB.put('n.md', 'from b\n', 3000);
+    now = 2500;
 
-    const conflicts = allConflicts(await syncAll());
+    // Drive a brings its edit (written locally at 2500); drive b's edit is newer, so it wins.
+    const { conflicts } = await syncAll();
 
-    expect(conflicts.map((c) => c.driveId)).toEqual(['b']);
-    expect(await local.read('n.md')).toBe('from a\n');
-    expect(conflicts).toHaveLength(1);
-    expect(conflicts[0].remoteText).toBe('from b\n');
+    const copy = 'n (conflicted copy).md';
+    expect(conflicts.map((c) => [c.driveId, c.copyPath, c.winner])).toEqual([['b', copy, 'remote']]);
+    expect(await local.read('n.md')).toBe('from b\n');
+    expect(await local.read(copy)).toBe('from a\n');
+    for (const drive of [driveA, driveB]) {
+      expect(drive.content('n.md')).toBe('from b\n');
+      expect(drive.content(copy)).toBe('from a\n');
+    }
+    expect((await syncAll()).conflicts).toEqual([]);
   });
-
   it('failing drive does not block the others', async () => {
     await local.write('n.md', 'x');
     const broken: RemoteDriveStore = {
@@ -126,7 +134,7 @@ describe('MultiDriveSync', () => {
       writeManifest: (b) => driveA.writeManifest(b),
     };
 
-    const outcomes = await sync.sync([target('broken', broken), targets[1]]);
+    const { outcomes } = await sync.sync([target('broken', broken), targets[1]]);
 
     expect(outcomes[0].error).toBe('offline');
     expect(driveB.content('n.md')).toBe('x');

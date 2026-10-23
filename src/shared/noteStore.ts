@@ -267,20 +267,4 @@ export class NoteStore {
     );
     this.changed();
   }
-
-  /** Returns a free sibling path for `path` by appending `suffix` (and a counter) before the extension. */
-  async uniqueSibling(path: string, suffix: string): Promise<string> {
-    const parent = P.parent(path);
-    const n = P.name(path);
-    const dot = n.lastIndexOf('.');
-    const base = dot > 0 ? n.substring(0, dot) : n;
-    const ext = dot > 0 ? n.substring(dot) : '';
-    let candidate = P.join(parent, `${base}${suffix}${ext}`);
-    let counter = 2;
-    while (await this.exists(candidate)) {
-      candidate = P.join(parent, `${base}${suffix} ${counter}${ext}`);
-      counter++;
-    }
-    return candidate;
-  }
 }

@@ -82,7 +82,7 @@ describe('IndexedDB stores', () => {
       metadata: new IdbSyncMetadataStore(db, id),
       base: new IdbBaseContentStore(db, id),
     });
-    const outcomes = await sync.sync([target('one', one), target('two', two)]);
+    const { outcomes } = await sync.sync([target('one', one), target('two', two)]);
     expect(outcomes.every((o) => o.error === null)).toBe(true);
     expect(one.text('b.md')).toBe('from two');
     expect(two.text('a.md')).toBe('hello');

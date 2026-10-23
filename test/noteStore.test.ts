@@ -101,13 +101,6 @@ describe('NoteStore', () => {
     expect(await store.read('n.md')).toBe('two');
   });
 
-  it('uniqueSibling adds counter', async () => {
-    await store.write('a/n.md', 'x');
-    expect(await store.uniqueSibling('a/n.md', ' (copy)')).toBe('a/n (copy).md');
-    await store.write('a/n (copy).md', 'y');
-    expect(await store.uniqueSibling('a/n.md', ' (copy)')).toBe('a/n (copy) 2.md');
-  });
-
   it('move note and folder between folders', async () => {
     await store.write('a/n.md', 'x');
     await store.write('a/sub/deep.md', 'd');
