@@ -124,9 +124,9 @@ describe('SyncEngine', () => {
       { path: 'n.md', copyPath: COPY, winner: 'remote', baseText: null, driveId: 'drive' },
     ]);
     expect(await local.read('n.md')).toBe('remote');
-    expect(await local.read(COPY)).toBe('local');
+    expect(await local.read(COPY)).toBe(note('xyzw0001', 'local'));
     expect(remote.content('n.md')).toBe('remote');
-    expect(remote.content(COPY)).toBe('local');
+    expect(remote.content(COPY)).toBe(note('xyzw0001', 'local'));
     await assertStable();
   });
   it('local edit uploads revision', async () => {
@@ -166,8 +166,8 @@ describe('SyncEngine', () => {
     ]);
     expect(await local.read('n.md')).toBe('a\nlocal\n');
     expect(remote.content('n.md')).toBe('a\nlocal\n');
-    expect(await local.read(COPY)).toBe('a\nremote\n');
-    expect(remote.content(COPY)).toBe('a\nremote\n');
+    expect(await local.read(COPY)).toBe(note('xyzw0001', 'a\nremote\n'));
+    expect(remote.content(COPY)).toBe(note('xyzw0001', 'a\nremote\n'));
     expect(remote.calls).toContain(`uploadNew:${COPY}`);
     expect(localChanges(result)).toBe(1);
     await assertStable();
@@ -181,8 +181,8 @@ describe('SyncEngine', () => {
     expect(conflicts.map((c) => c.winner)).toEqual(['remote']);
     expect(await local.read('n.md')).toBe('a\nremote\n');
     expect(remote.content('n.md')).toBe('a\nremote\n');
-    expect(await local.read(COPY)).toBe('a\nlocal\n');
-    expect(remote.content(COPY)).toBe('a\nlocal\n');
+    expect(await local.read(COPY)).toBe(note('xyzw0001', 'a\nlocal\n'));
+    expect(remote.content(COPY)).toBe(note('xyzw0001', 'a\nlocal\n'));
     await assertStable();
   });
 
@@ -193,7 +193,7 @@ describe('SyncEngine', () => {
 
     expect(conflicts.map((c) => c.winner)).toEqual(['remote']);
     expect(await local.read('n.md')).toBe('a\nremote\n');
-    expect(await local.read(COPY)).toBe('a\nlocal\n');
+    expect(await local.read(COPY)).toBe(note('xyzw0001', 'a\nlocal\n'));
   });
 
   it('the conflicted copy gets a new note id and a free name', async () => {
