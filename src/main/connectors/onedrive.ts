@@ -8,7 +8,7 @@ import {
   type InteractiveRequest,
   type SilentFlowRequest,
 } from '@azure/msal-node';
-import { MANIFEST_PATH } from '../../shared/manifest';
+import { MANIFEST_PATH } from '../../shared/manifestPath';
 import { isAncestor, join } from '../../shared/paths';
 import {
   RemoteUnavailableError,

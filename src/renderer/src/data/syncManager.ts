@@ -1,6 +1,8 @@
+import type { MergeResult } from '@marknotes/sync';
+import { ConflictMergeBack } from '../../../shared/conflictMergeBack';
 import { MultiDriveSync, type DriveSyncTarget } from '../../../shared/multiDriveSync';
 import type { NoteStore } from '../../../shared/noteStore';
-import { summary, type ConflictResolution, type SyncConflict } from '../../../shared/syncEngine';
+import { summary, type SyncConflict } from '../../../shared/syncEngine';
 import type { DriveAccount } from '../../../shared/types';
 import type { ProviderInfo } from '../../../preload/api';
 import { api, IpcRemoteDriveStore, unwrap } from './api';
@@ -37,6 +39,7 @@ export class SyncManager {
   private listeners = new Set<(s: SyncState) => void>();
   private queue: Promise<unknown> = Promise.resolve();
   private multiSync: MultiDriveSync;
+  private mergeBack: ConflictMergeBack;
   private providers: ProviderInfo[] = [];
 
   constructor(
@@ -46,6 +49,7 @@ export class SyncManager {
     deviceId: string,
   ) {
     this.multiSync = new MultiDriveSync(notes, deviceId);
+    this.mergeBack = new ConflictMergeBack(notes);
   }
 
   get current() {
@@ -62,7 +66,7 @@ export class SyncManager {
     for (const l of this.listeners) l(this.state);
   }
 
-  /** Serializes sync, resolve and disconnect operations. */
+  /** Serializes sync, merge-back and disconnect operations. */
   private locked<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.queue.then(fn, fn);
     this.queue = run.catch(() => undefined);
@@ -125,26 +129,39 @@ export class SyncManager {
     });
   }
 
-  /** Applies `resolution` on the conflict's drive, then syncs again so the other drives receive it. */
-  async resolve(conflict: SyncConflict, resolution: ConflictResolution): Promise<void> {
-    const resolved = await this.locked(async () => {
-      this.update({ running: true });
-      try {
-        const account = this.state.drives.find((d) => d.account.id === conflict.driveId)?.account;
-        if (!account) throw new Error('The drive of this conflict is no longer connected');
-        await this.multiSync.engine(this.target(account)).resolve(conflict, resolution);
-        this.update({ conflicts: this.state.conflicts.filter((c) => c !== conflict) });
-        return true;
-      } catch (e) {
-        this.update({ message: `Could not resolve ${conflict.path}: ${describe(e)}` });
-        return false;
-      } finally {
-        this.update({ running: false });
-      }
-    });
-    if (resolved) await this.syncNow();
+  /** Three-way merge of the note and its conflicted copy, for the merge-back view. */
+  mergePreview(conflict: SyncConflict): Promise<MergeResult> {
+    return this.mergeBack.merge(conflict);
   }
 
+  /** Saves `text` as the note, deletes the conflicted copy, then syncs so every drive receives both changes. */
+  mergeCopyBack(conflict: SyncConflict, text: string): Promise<void> {
+    return this.settle(conflict, `merge ${conflict.copyPath}`, () => this.mergeBack.apply(conflict, text));
+  }
+
+  /** Deletes the conflicted copy, keeping the note, then syncs so it is deleted on every drive. */
+  discardCopy(conflict: SyncConflict): Promise<void> {
+    return this.settle(conflict, `delete ${conflict.copyPath}`, () => this.mergeBack.discardCopy(conflict));
+  }
+
+  /** Keeps the note and its conflicted copy as two notes: the conflict is just dismissed. */
+  keepBoth(conflict: SyncConflict) {
+    this.update({ conflicts: this.state.conflicts.filter((c) => c.copyPath !== conflict.copyPath) });
+  }
+
+  private async settle(conflict: SyncConflict, what: string, fn: () => Promise<void>): Promise<void> {
+    const done = await this.locked(async () => {
+      try {
+        await fn();
+        this.update({ conflicts: this.state.conflicts.filter((c) => c.copyPath !== conflict.copyPath) });
+        return true;
+      } catch (e) {
+        this.update({ message: `Could not ${what}: ${describe(e)}` });
+        return false;
+      }
+    });
+    if (done) await this.syncNow();
+  }
   private target(account: DriveAccount): DriveSyncTarget {
     const reason = this.providers.find((p) => p.provider === account.provider)?.unavailableReason;
     if (reason) throw new Error(reason);
@@ -179,7 +196,7 @@ export class SyncManager {
           messages.set(account.id, describe(e));
         }
       }
-      const outcomes = await this.multiSync.sync(targets);
+      const { outcomes, conflicts } = await this.multiSync.sync(targets);
       for (const outcome of outcomes) {
         messages.set(
           outcome.driveId,
@@ -196,12 +213,23 @@ export class SyncManager {
       await this.settings.set('lastSyncAt', now);
       await this.settings.set('lastSyncSummary', text);
       await this.refreshDrives();
-      this.update({ message: text, conflicts: outcomes.flatMap((o) => o.result?.conflicts ?? []) });
+      this.update({
+        message: text,
+        conflicts: await this.pendingConflicts([...this.state.conflicts, ...conflicts]),
+      });
     } catch (e) {
       this.update({ message: `Sync failed: ${describe(e)}` });
     } finally {
       this.update({ running: false });
     }
+  }
+  /** Conflicts stay listed while both the note and its copy exist; one entry per copy. */
+  private async pendingConflicts(conflicts: SyncConflict[]): Promise<SyncConflict[]> {
+    const pending = new Map<string, SyncConflict>();
+    for (const c of conflicts) {
+      if (!pending.has(c.copyPath) && (await this.mergeBack.isPending(c))) pending.set(c.copyPath, c);
+    }
+    return [...pending.values()];
   }
 }
 

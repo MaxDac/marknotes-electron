@@ -1,4 +1,4 @@
-import { MANIFEST_DIRECTORY, MANIFEST_PATH } from '../../../shared/manifest';
+import { MANIFEST_DIRECTORY, MANIFEST_PATH } from '../../../shared/manifestPath';
 import { isAncestor, join, name as baseName, normalize, parent as parentPath } from '../../../shared/paths';
 import type { RemoteDriveStore, RemoteEntry } from '../../../shared/types';
 import type { DriveClient, FileUploader, NodeEntity, UploadMetadata } from './sdk';

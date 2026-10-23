@@ -1,29 +1,57 @@
+import { parseManifest, readId } from '@marknotes/sync';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { ConflictMergeBack } from '../src/shared/conflictMergeBack';
 import { FakeRemoteDriveStore } from '../src/shared/fakeRemote';
 import { sha256Hex, utf8 } from '../src/shared/hashing';
-import { SyncManifest } from '../src/shared/manifest';
 import { MemoryNodeBackend, NoteStore } from '../src/shared/noteStore';
-import {
-  CONFLICT_SUFFIX,
-  localChanges,
-  summary,
-  SyncEngine,
-  type SyncResult,
-} from '../src/shared/syncEngine';
-import { InMemoryBaseContentStore, InMemorySyncMetadataStore } from '../src/shared/types';
+import { localChanges, summary, SyncEngine, type SyncResult } from '../src/shared/syncEngine';
+import { InMemoryBaseContentStore, InMemorySyncMetadataStore, type RemoteEntry } from '../src/shared/types';
+
+const COPY = 'n (conflicted copy).md';
+const note = (id: string, body: string) => `---\nid: ${id}\n---\n${body}`;
 
 describe('SyncEngine', () => {
+  let now: number;
+  let ids: string[];
   let local: NoteStore;
   let remote: FakeRemoteDriveStore;
   let metadata: InMemorySyncMetadataStore;
+  let base: InMemoryBaseContentStore;
   let engine: SyncEngine;
 
   beforeEach(() => {
-    local = new NoteStore(new MemoryNodeBackend());
+    now = 1000;
+    ids = ['xyzw0001', 'xyzw0002', 'xyzw0003'];
+    local = new NoteStore(new MemoryNodeBackend(), () => now);
     remote = new FakeRemoteDriveStore();
     metadata = new InMemorySyncMetadataStore();
-    engine = new SyncEngine(local, remote, metadata, new InMemoryBaseContentStore(), '', '', () => 1000);
+    base = new InMemoryBaseContentStore();
+    engine = new SyncEngine(
+      local,
+      remote,
+      metadata,
+      base,
+      'drive',
+      'device',
+      () => now,
+      () => ids.shift()!,
+    );
   });
+
+  /** A note synced as `base`, then edited locally at `localAt` and on the drive at `remoteAt`. */
+  async function editBothSides(
+    baseText: string,
+    localText: string,
+    localAt: number,
+    remoteText: string,
+    remoteAt: number,
+  ) {
+    await local.write('n.md', baseText);
+    await syncClean();
+    now = localAt;
+    await local.write('n.md', localText);
+    remote.put('n.md', remoteText, remoteAt);
+  }
 
   async function syncClean(): Promise<SyncResult> {
     const result = await engine.sync();
@@ -85,19 +113,22 @@ describe('SyncEngine', () => {
     await assertStable();
   });
 
-  it('different content without history is a conflict', async () => {
+  it('different content without history keeps the newest and saves the other as a copy', async () => {
+    now = 100;
     await local.write('n.md', 'local');
-    remote.putFile('n.md', 'remote');
+    remote.put('n.md', 'remote', 200);
 
     const result = await syncClean();
 
-    expect(result.conflicts).toHaveLength(1);
-    expect(result.conflicts[0].localText).toBe('local');
-    expect(result.conflicts[0].remoteText).toBe('remote');
-    expect(await local.read('n.md')).toBe('local');
+    expect(result.conflicts).toEqual([
+      { path: 'n.md', copyPath: COPY, winner: 'remote', baseText: null, driveId: 'drive' },
+    ]);
+    expect(await local.read('n.md')).toBe('remote');
+    expect(await local.read(COPY)).toBe('local');
     expect(remote.content('n.md')).toBe('remote');
+    expect(remote.content(COPY)).toBe('local');
+    await assertStable();
   });
-
   it('local edit uploads revision', async () => {
     await local.write('n.md', 'v1');
     await syncClean();
@@ -124,54 +155,102 @@ describe('SyncEngine', () => {
     await assertStable();
   });
 
-  it('edits on both sides produce conflict and keepLocal resolves', async () => {
-    await local.write('n.md', 'base');
-    await syncClean();
-    await local.write('n.md', 'local');
-    remote.putFile('n.md', 'remote');
+  it('overlapping edits: newer local version wins and the drive version becomes a copy', async () => {
+    await editBothSides('a\nb\n', 'a\nlocal\n', 3000, 'a\nremote\n', 2000);
+    remote.calls.length = 0;
 
-    const { conflicts } = await syncClean();
-    expect(conflicts).toHaveLength(1);
-    await engine.resolve(conflicts[0], { kind: 'keepLocal' });
+    const result = await syncClean();
 
-    expect(await local.read('n.md')).toBe('local');
-    expect(remote.content('n.md')).toBe('local');
+    expect(result.conflicts).toEqual([
+      { path: 'n.md', copyPath: COPY, winner: 'local', baseText: 'a\nb\n', driveId: 'drive' },
+    ]);
+    expect(await local.read('n.md')).toBe('a\nlocal\n');
+    expect(remote.content('n.md')).toBe('a\nlocal\n');
+    expect(await local.read(COPY)).toBe('a\nremote\n');
+    expect(remote.content(COPY)).toBe('a\nremote\n');
+    expect(remote.calls).toContain(`uploadNew:${COPY}`);
+    expect(localChanges(result)).toBe(1);
     await assertStable();
   });
 
-  it('keepRemote resolution', async () => {
-    await local.write('n.md', 'base');
-    await syncClean();
-    await local.write('n.md', 'local');
-    remote.putFile('n.md', 'remote');
+  it('overlapping edits: newer drive version wins and the local version becomes a copy', async () => {
+    await editBothSides('a\nb\n', 'a\nlocal\n', 2000, 'a\nremote\n', 3000);
 
     const { conflicts } = await syncClean();
-    expect(conflicts).toHaveLength(1);
-    await engine.resolve(conflicts[0], { kind: 'keepRemote' });
 
-    expect(await local.read('n.md')).toBe('remote');
-    expect(remote.content('n.md')).toBe('remote');
+    expect(conflicts.map((c) => c.winner)).toEqual(['remote']);
+    expect(await local.read('n.md')).toBe('a\nremote\n');
+    expect(remote.content('n.md')).toBe('a\nremote\n');
+    expect(await local.read(COPY)).toBe('a\nlocal\n');
+    expect(remote.content(COPY)).toBe('a\nlocal\n');
     await assertStable();
   });
 
-  it('keepBoth resolution duplicates remote version', async () => {
-    await local.write('dir/n.md', 'base');
-    await syncClean();
-    await local.write('dir/n.md', 'local');
-    remote.putFile('dir/n.md', 'remote');
+  it('overlapping edits at the same time: the drive version wins', async () => {
+    await editBothSides('a\nb\n', 'a\nlocal\n', 2000, 'a\nremote\n', 2000);
 
     const { conflicts } = await syncClean();
-    expect(conflicts).toHaveLength(1);
-    await engine.resolve(conflicts[0], { kind: 'keepBoth' });
 
-    const copy = `dir/n${CONFLICT_SUFFIX}.md`;
-    expect(await local.read('dir/n.md')).toBe('local');
-    expect(await local.read(copy)).toBe('remote');
-    expect(remote.content('dir/n.md')).toBe('local');
-    expect(remote.content(copy)).toBe('remote');
+    expect(conflicts.map((c) => c.winner)).toEqual(['remote']);
+    expect(await local.read('n.md')).toBe('a\nremote\n');
+    expect(await local.read(COPY)).toBe('a\nlocal\n');
+  });
+
+  it('the conflicted copy gets a new note id and a free name', async () => {
+    await local.write(COPY, 'an older copy');
+    await editBothSides(
+      note('abcd1234', 'base\n'),
+      note('abcd1234', 'local\n'),
+      3000,
+      note('abcd1234', 'remote\n'),
+      2000,
+    );
+
+    const { conflicts } = await syncClean();
+
+    const copyPath = 'n (conflicted copy) 2.md';
+    expect(conflicts.map((c) => c.copyPath)).toEqual([copyPath]);
+    expect(readId(await local.read('n.md'))).toBe('abcd1234');
+    expect(await local.read(copyPath)).toBe(note('xyzw0001', 'remote\n'));
+    expect(remote.content(copyPath)).toBe(note('xyzw0001', 'remote\n'));
+    expect(await local.read(COPY)).toBe('an older copy');
+  });
+
+  it('merging the copy back keeps the note id and deletes the copy everywhere', async () => {
+    await editBothSides(
+      note('abcd1234', 'a\nb\n'),
+      note('abcd1234', 'a\nlocal\n'),
+      3000,
+      note('abcd1234', 'a\nremote\n'),
+      2000,
+    );
+    const [conflict] = (await syncClean()).conflicts;
+    const mergeBack = new ConflictMergeBack(local);
+    expect(await mergeBack.isPending(conflict)).toBe(true);
+
+    const merge = await mergeBack.merge(conflict);
+    expect(merge.conflicts).toBe(1);
+    await mergeBack.apply(conflict, note('abcd1234', 'a\nlocal and remote\n'));
+    expect(await mergeBack.isPending(conflict)).toBe(false);
+    await syncClean();
+
+    expect(remote.content('n.md')).toBe(note('abcd1234', 'a\nlocal and remote\n'));
+    expect(remote.exists(COPY)).toBe(false);
+    expect(await local.exists(COPY)).toBe(false);
     await assertStable();
   });
 
+  it('discarding the copy deletes it everywhere and keeps the note', async () => {
+    await editBothSides('a\nb\n', 'a\nlocal\n', 3000, 'a\nremote\n', 2000);
+    const [conflict] = (await syncClean()).conflicts;
+
+    await new ConflictMergeBack(local).discardCopy(conflict);
+    await syncClean();
+
+    expect(remote.exists(COPY)).toBe(false);
+    expect(remote.content('n.md')).toBe('a\nlocal\n');
+    await assertStable();
+  });
   it('local deletion trashes remote', async () => {
     await local.write('n.md', 'x');
     await syncClean();
@@ -263,21 +342,8 @@ describe('SyncEngine', () => {
     await assertStable();
   });
 
-  it('conflict is reported again until resolved', async () => {
-    await local.write('n.md', 'base');
-    await syncClean();
-    await local.write('n.md', 'local');
-    remote.putFile('n.md', 'remote');
-
-    expect((await syncClean()).conflicts).toHaveLength(1);
-    expect((await syncClean()).conflicts).toHaveLength(1);
-  });
-
   it('non-overlapping edits on both sides are merged automatically', async () => {
-    await local.write('n.md', 'a\nb\nc\n');
-    await syncClean();
-    await local.write('n.md', 'A\nb\nc\n');
-    remote.putFile('n.md', 'a\nb\nC\n');
+    await editBothSides('a\nb\nc\n', 'A\nb\nc\n', 2000, 'a\nb\nC\n', 3000);
 
     const result = await syncClean();
 
@@ -288,31 +354,36 @@ describe('SyncEngine', () => {
     await assertStable();
   });
 
-  it('conflict carries base and merged resolution is saved on both sides', async () => {
-    await local.write('n.md', 'a\nb\n');
+  it('a failing step is reported and the sync goes on', async () => {
+    await local.write('bad.md', 'bad');
+    await local.write('good.md', 'good');
+    const uploadNew = remote.uploadNew.bind(remote);
+    remote.uploadNew = (path: string, bytes: Uint8Array): Promise<RemoteEntry> =>
+      path === 'bad.md' ? Promise.reject(new Error('quota exceeded')) : uploadNew(path, bytes);
+
+    const result = await engine.sync();
+
+    expect(result.errors).toEqual(['bad.md: quota exceeded']);
+    expect(remote.content('good.md')).toBe('good');
+    expect(remote.exists('bad.md')).toBe(false);
+    remote.uploadNew = uploadNew;
     await syncClean();
-    await local.write('n.md', 'a\nlocal\n');
-    remote.putFile('n.md', 'a\nremote\n');
-
-    const { conflicts } = await syncClean();
-    expect(conflicts).toHaveLength(1);
-    const conflict = conflicts[0];
-    expect(conflict.baseText).toBe('a\nb\n');
-    expect(conflict.merge.conflicts).toHaveLength(1);
-
-    await engine.resolve(conflict, { kind: 'merged', text: 'a\nlocal and remote\n' });
-
-    expect(await local.read('n.md')).toBe('a\nlocal and remote\n');
-    expect(remote.content('n.md')).toBe('a\nlocal and remote\n');
-    await assertStable();
+    expect(remote.content('bad.md')).toBe('bad');
   });
 
+  it('an unreadable manifest is ignored', async () => {
+    await local.write('n.md', 'x');
+    remote.readManifest = () => Promise.reject(new Error('offline'));
+    await syncClean();
+    expect(remote.content('n.md')).toBe('x');
+  });
   it('manifest describes synced notes and is only rewritten on change', async () => {
     await local.write('a/n.md', 'x');
     await syncClean();
 
-    const manifest = SyncManifest.parse(utf8.decode(remote.manifest!))!;
+    const manifest = parseManifest(utf8.decode(remote.manifest!))!;
     expect(manifest).not.toBeNull();
+    expect(manifest.deviceId).toBe('device');
     expect(Object.keys(manifest.files)).toEqual(['a/n.md']);
     expect(manifest.files['a/n.md'].sha256).toBe(await sha256Hex(utf8.encode('x')));
     expect(remote.manifestWrites).toBe(1);
@@ -320,6 +391,7 @@ describe('SyncEngine', () => {
     await syncClean();
     expect(remote.manifestWrites).toBe(1);
 
+    now = 2000;
     await local.write('a/n.md', 'y');
     await syncClean();
     expect(remote.manifestWrites).toBe(2);
@@ -353,11 +425,11 @@ describe('SyncEngine', () => {
       downloaded: 2,
       deletedLocal: 3,
       deletedRemote: 4,
-      conflicts: [],
+      conflicts: [{ path: 'n.md', copyPath: COPY, winner: 'local', baseText: null, driveId: 'd' }],
       errors: ['e'],
       merged: 5,
     };
-    expect(summary(result)).toBe('↑1 ↓2, merged 5, deleted 7, 1 error(s)');
-    expect(localChanges(result)).toBe(10);
+    expect(summary(result)).toBe('↑1 ↓2, merged 5, deleted 7, 1 conflicted copy(ies), 1 error(s)');
+    expect(localChanges(result)).toBe(11);
   });
 });

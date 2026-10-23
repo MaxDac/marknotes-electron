@@ -30,8 +30,13 @@ and the same sync format, so all MarkNotes apps can share one drive folder.
 - **Appearance**: theme System, Light or Dark, and an accent colour from 8 palettes.
 - **Multi-drive two-way sync** with any number of Proton Drive, Dropbox and OneDrive accounts. Sync runs on launch and
   on **Sync now** (no background polling). It keeps per-drive state and the `.marknotes/manifest.json` manifest, and merges lines
-  three-way against the last synced version. Conflicts are resolved per change: Mine, Theirs, Both, Neither, or edit by hand.
+  three-way against the last synced version. When edits overlap, the newest version wins and the other one is saved next
+  to the note as `<name> (conflicted copy).md` (with a new note id) on every drive. The conflicts page merges the copy
+  back (per change: Kept, Copy, Both, Neither, or edit by hand), discards it or keeps both files.
   Images are binary and immutable: they are uploaded, downloaded and deleted, never merged.
+  The sync algorithm (plan, merge, conflicts, manifest, multi-drive order) comes from the shared Rust core
+  [marknotes-sync](https://github.com/MaxDac/marknotes-sync) (`@marknotes/sync`, WebAssembly), used by every MarkNotes
+  app; this app only does the file and drive I/O.
 - **Proton login**: SRP password login with TOTP. CAPTCHA/human verification, two-password mode and FIDO2-only
   accounts are not supported.
 - **Dropbox / OneDrive login**: OAuth 2 PKCE (Dropbox) and MSAL (OneDrive) in the system browser, with a loopback redirect.
@@ -87,6 +92,10 @@ Audit/network errors fail the check; advisories are not ignored. This establishe
 advisories at check time**, not a guarantee against undiscovered vulnerabilities or vendor advisories outside npm's data.
 The deprecation check reads lockfile metadata; recheck registry metadata when updating dependencies, because a package
 can be deprecated after the lockfile was generated.
+
+Every package resolves from `https://registry.npmjs.org/` except the shared sync core `@marknotes/sync`, installed from a
+[marknotes-sync release](https://github.com/MaxDac/marknotes-sync/releases) tarball (pinned by URL and lockfile
+integrity). Update it with `npm install --package-lock-only --ignore-scripts <release .tgz URL>`.
 
 Stable electron-builder 26.18.0 and electron-updater 6.8.11 still need these version-pinned compatibility fixes:
 

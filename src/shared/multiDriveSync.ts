@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_PASSES, SyncScheduler } from '@marknotes/sync';
 import type { NoteStore } from './noteStore';
 import { localChanges, SyncEngine, type SyncConflict, type SyncResult } from './syncEngine';
 import type { BaseContentStore, RemoteDriveStore, SyncMetadataStore } from './types';
@@ -17,19 +18,26 @@ export interface DriveSyncOutcome {
   error: string | null;
 }
 
-export const allConflicts = (outcomes: DriveSyncOutcome[]): SyncConflict[] =>
-  outcomes.flatMap((o) => o.result?.conflicts ?? []);
+/** `outcomes` holds the last pass of each drive; `conflicts` the conflicted copies made by every pass. */
+export interface MultiDriveSyncResult {
+  outcomes: DriveSyncOutcome[];
+  conflicts: SyncConflict[];
+}
 
 /**
- * Keeps the local note tree and every connected drive identical. Whenever a drive brings changes
- * into the local tree, the other drives are synced again, bounded by `maxPassesPerDrive`.
+ * Keeps the local note tree and every connected drive identical.
+ *
+ * Each drive is synced in turn with its own metadata and base copies. The order comes from the shared sync core's
+ * `SyncScheduler`: whenever a drive brings changes into the local tree, the other drives are synced again so they
+ * receive them, at most `maxPassesPerDrive` times each.
  */
 export class MultiDriveSync {
   constructor(
     private readonly local: NoteStore,
     private readonly deviceId = '',
-    private readonly maxPassesPerDrive = 3,
+    private readonly maxPassesPerDrive: number = DEFAULT_MAX_PASSES,
     private readonly clock: () => number = Date.now,
+    private readonly newId?: () => string,
   ) {}
 
   engine(target: DriveSyncTarget): SyncEngine {
@@ -41,34 +49,38 @@ export class MultiDriveSync {
       target.driveId,
       this.deviceId,
       this.clock,
+      this.newId,
     );
   }
 
   async sync(
     targets: DriveSyncTarget[],
     onOutcome?: (outcome: DriveSyncOutcome) => void,
-  ): Promise<DriveSyncOutcome[]> {
+  ): Promise<MultiDriveSyncResult> {
+    const byId = new Map(targets.map((t) => [t.driveId, t]));
     const outcomes = new Map<string, DriveSyncOutcome>();
-    const passes = new Map<string, number>();
-    const pending = [...targets];
-    while (pending.length > 0) {
-      const target = pending.shift()!;
-      const count = passes.get(target.driveId) ?? 0;
-      if (count >= this.maxPassesPerDrive) continue;
-      passes.set(target.driveId, count + 1);
-      let outcome: DriveSyncOutcome;
-      try {
-        outcome = { driveId: target.driveId, result: await this.engine(target).sync(), error: null };
-      } catch (e) {
-        const message = e instanceof Error ? e.message || e.name : String(e);
-        outcome = { driveId: target.driveId, result: null, error: message };
+    const conflicts: SyncConflict[] = [];
+    const scheduler = new SyncScheduler(
+      targets.map((t) => t.driveId),
+      this.maxPassesPerDrive,
+    );
+    try {
+      for (let driveId = scheduler.next(); driveId !== undefined; driveId = scheduler.next()) {
+        let outcome: DriveSyncOutcome;
+        try {
+          outcome = { driveId, result: await this.engine(byId.get(driveId)!).sync(), error: null };
+        } catch (e) {
+          const message = e instanceof Error ? e.message || e.name : String(e);
+          outcome = { driveId, result: null, error: message };
+        }
+        outcomes.set(driveId, outcome);
+        conflicts.push(...(outcome.result?.conflicts ?? []));
+        onOutcome?.(outcome);
+        scheduler.report(driveId, outcome.result ? localChanges(outcome.result) : 0, outcome.result === null);
       }
-      outcomes.set(target.driveId, outcome);
-      onOutcome?.(outcome);
-      if (outcome.result && localChanges(outcome.result) > 0) {
-        for (const t of targets) if (t !== target && !pending.includes(t)) pending.push(t);
-      }
+    } finally {
+      scheduler.free();
     }
-    return targets.flatMap((t) => outcomes.get(t.driveId) ?? []);
+    return { outcomes: targets.flatMap((t) => outcomes.get(t.driveId) ?? []), conflicts };
   }
 }

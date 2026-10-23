@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
-import type { ConflictChoice } from '../../../shared/merge';
+import type { ConflictChoice, MergeResult } from '@marknotes/sync';
+import { mergeText } from '@marknotes/sync';
+import { useState } from 'react';
 import * as P from '../../../shared/paths';
 import type { SyncConflict } from '../../../shared/syncEngine';
 import { PROVIDER_NAMES } from '../../../shared/types';
@@ -7,8 +8,8 @@ import { Dialog } from './Dialog';
 import { useApp, useSyncState } from './context';
 
 const CHOICES: { value: ConflictChoice; label: string }[] = [
-  { value: 'local', label: 'Mine' },
-  { value: 'remote', label: 'Theirs' },
+  { value: 'local', label: 'Kept' },
+  { value: 'remote', label: 'Copy' },
   { value: 'both', label: 'Both' },
   { value: 'neither', label: 'Neither' },
 ];
@@ -31,7 +32,7 @@ export function Conflicts(props: { onBack(): void }) {
           {state.conflicts.map((c) => {
             const drive = state.drives.find((d) => d.account.id === c.driveId)?.account;
             const driveName = drive ? `${PROVIDER_NAMES[drive.provider]} (${drive.label})` : 'the drive';
-            return <ConflictCard key={`${c.driveId}:${c.path}`} conflict={c} driveName={driveName} />;
+            return <ConflictCard key={c.copyPath} conflict={c} driveName={driveName} />;
           })}
         </div>
       </div>
@@ -43,20 +44,35 @@ function ConflictCard(props: { conflict: SyncConflict; driveName: string }) {
   const { sync } = useApp();
   const state = useSyncState();
   const { conflict, driveName } = props;
-  const merge = useMemo(() => conflict.merge, [conflict]);
+  const [merge, setMerge] = useState<MergeResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [choices, setChoices] = useState<Partial<Record<number, ConflictChoice>>>({});
   const [editing, setEditing] = useState<string | null>(null);
-  const conflictCount = merge.conflicts.length;
-  const allChosen = Object.keys(choices).length === conflictCount;
-  let conflictIndex = 0;
+  const kept = conflict.winner === 'local' ? 'this device' : driveName;
+  const other = conflict.winner === 'local' ? driveName : 'this device';
+  const allChosen = merge !== null && Object.keys(choices).length === merge.conflicts;
+  const merged = () => (merge ? mergeText(merge.chunks, choices as Record<number, ConflictChoice>) : '');
 
+  const startMerge = async () => {
+    setError(null);
+    try {
+      setChoices({});
+      setMerge(await sync.mergePreview(conflict));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  let conflictIndex = 0;
   return (
     <div className="card" data-testid="conflict">
       <div className="title">{P.displayName(conflict.path)}</div>
       <div className="small">
-        /{conflict.path} · Changed on this device and on {driveName}.
+        /{conflict.path} · Changed on this device and on {driveName}. The newest version (from {kept}) was
+        kept; the version from {other} was saved as {conflict.copyPath}.
       </div>
-      {merge.chunks.map((chunk, i) => {
+      {error && <div className="small">Could not merge: {error}</div>}
+      {merge?.chunks.map((chunk, i) => {
         if (chunk.kind === 'resolved') {
           const text = joined(chunk.lines);
           if (text === '') return null;
@@ -71,9 +87,9 @@ function ConflictCard(props: { conflict: SyncConflict; driveName: string }) {
         const index = conflictIndex++;
         return (
           <div key={i} className="hunk">
-            <div className="side-label">Change {index + 1} · This device</div>
+            <div className="side-label">Change {index + 1} · Kept version</div>
             <pre className="local">{joined(chunk.local) || ' '}</pre>
-            <div className="side-label">{driveName}</div>
+            <div className="side-label">Conflicted copy</div>
             <pre className="remote">{joined(chunk.remote) || ' '}</pre>
             <div className="row" style={{ padding: 6 }}>
               {CHOICES.map((c) => (
@@ -90,27 +106,33 @@ function ConflictCard(props: { conflict: SyncConflict; driveName: string }) {
         );
       })}
       <div className="row" style={{ marginTop: 8 }}>
-        {conflictCount > 0 && (
-          <button
-            className="filled"
-            disabled={!allChosen || state.running}
-            onClick={() => void sync.resolve(conflict, { kind: 'merged', text: merge.text(choices) })}
-          >
-            Save merge
-          </button>
+        {merge === null ? (
+          <>
+            <button className="filled" disabled={state.running} onClick={() => void startMerge()}>
+              Merge copy back
+            </button>
+            <button disabled={state.running} onClick={() => void sync.discardCopy(conflict)}>
+              Discard copy
+            </button>
+            <button disabled={state.running} onClick={() => sync.keepBoth(conflict)}>
+              Keep both files
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className="filled"
+              disabled={!allChosen || state.running}
+              onClick={() => void sync.mergeCopyBack(conflict, merged())}
+            >
+              Save merge
+            </button>
+            <button className="outlined" disabled={state.running} onClick={() => setEditing(merged())}>
+              Edit merged
+            </button>
+            <button onClick={() => setMerge(null)}>Cancel</button>
+          </>
         )}
-        <button className="outlined" disabled={state.running} onClick={() => setEditing(merge.text(choices))}>
-          Edit merged
-        </button>
-        <button disabled={state.running} onClick={() => void sync.resolve(conflict, { kind: 'keepLocal' })}>
-          Keep mine
-        </button>
-        <button disabled={state.running} onClick={() => void sync.resolve(conflict, { kind: 'keepRemote' })}>
-          Keep theirs
-        </button>
-        <button disabled={state.running} onClick={() => void sync.resolve(conflict, { kind: 'keepBoth' })}>
-          Keep both files
-        </button>
       </div>
       {editing !== null && (
         <Dialog
@@ -122,7 +144,7 @@ function ConflictCard(props: { conflict: SyncConflict; driveName: string }) {
               <button
                 className="filled"
                 onClick={() => {
-                  void sync.resolve(conflict, { kind: 'merged', text: editing });
+                  void sync.mergeCopyBack(conflict, editing);
                   setEditing(null);
                 }}
               >

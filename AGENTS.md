@@ -50,8 +50,14 @@ names are required status checks in the `main` ruleset.
 - `src/preload/`: the typed `window.api` bridge (`api.ts`); the renderer has no Node access.
 - `src/renderer/`: React UI (`ui/`), IndexedDB storage and the sync manager (`data/`).
 - `src/shared/`: platform-independent logic shared by main and renderer and mirrored by the other apps: front matter
-  and note ids, note links, attachments, the sync manifest, three-way merge, the note store and the sync engine.
-  Most parity-relevant code lives here.
+  and note ids, note links, attachments, the note store and the sync engine. Most parity-relevant code lives here.
+- The sync algorithm (sync plan, three-way merge, newest-wins conflicts and conflicted copies, the manifest, the
+  multi-drive order) is not implemented here: it comes from the shared Rust core
+  [MaxDac/marknotes-sync](https://github.com/MaxDac/marknotes-sync), the npm package `@marknotes/sync` (WebAssembly,
+  loaded in the renderer; the CSP allows `'wasm-unsafe-eval'` for it). `syncEngine.ts` only lists the local tree and
+  the drive, runs the planned actions and stores records and base copies; `multiDriveSync.ts` follows the core's
+  `SyncScheduler`; `conflictMergeBack.ts` merges a conflicted copy back. Algorithm changes go to marknotes-sync (and
+  the spec), not here.
 - `test/` (vitest), `e2e/` (Playwright), `parity/` (spec fixture runner), `spec/` (marknotes-spec submodule, read-only
   here).
 
@@ -59,7 +65,8 @@ names are required status checks in the `main` ruleset.
 
 - TypeScript strict mode, ES modules, Prettier formatting; keep logic in `src/shared/` pure and covered by vitest.
 - Sync changes need sync engine tests against the fake remote (`src/shared/fakeRemote.ts`).
-- Keep the `.marknotes/manifest.json` format 1 compatible with Android and web.
+- The `.marknotes/manifest.json` format is built and parsed by `@marknotes/sync`; only its path lives here
+  (`manifestPath.ts`, used by the main-process drive stores).
 - Dependencies: no deprecated packages and zero audit findings. Read the README dependency policy before adding or
   upgrading packages, and regenerate only the lockfile with `npm install --package-lock-only --ignore-scripts`.
 - Proton requirements (also in the PR template): every request sends the `x-pm-appversion` header, only official

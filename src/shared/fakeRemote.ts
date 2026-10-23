@@ -1,4 +1,4 @@
-import { MANIFEST_PATH } from './manifest';
+import { MANIFEST_PATH } from './manifestPath';
 import * as P from './paths';
 import type { RemoteDriveStore, RemoteEntry } from './types';
 
@@ -123,13 +123,14 @@ export class FakeRemoteDriveStore implements RemoteDriveStore {
     this.manifestWrites++;
   }
 
-  /** Test helper: writes a file as another device would. */
-  put(path: string, text: string) {
+  /** Test helper: writes a file as another device would, at `modified` (default: now). */
+  put(path: string, text: string, modified: number = Date.now()) {
     const bytes = new TextEncoder().encode(text);
     const existing = this.nodes.get(path);
     if (existing) {
       existing.bytes = bytes;
       existing.version = this.nextVersion();
+      existing.modified = modified;
     } else {
       this.ensureParents(path);
       this.nodes.set(path, {
@@ -137,14 +138,14 @@ export class FakeRemoteDriveStore implements RemoteDriveStore {
         isFolder: false,
         version: this.nextVersion(),
         bytes,
-        modified: Date.now(),
+        modified,
       });
     }
   }
 
   /** Test helper: writes a file as another device would and returns its entry. */
-  putFile(path: string, text: string): RemoteEntry {
-    this.put(path, text);
+  putFile(path: string, text: string, modified?: number): RemoteEntry {
+    this.put(path, text, modified);
     return this.entry(path, this.nodes.get(path)!);
   }
 

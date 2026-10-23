@@ -1,4 +1,4 @@
-import { MANIFEST_PATH } from '../../shared/manifest';
+import { MANIFEST_PATH } from '../../shared/manifestPath';
 import {
   RemoteUnavailableError,
   syncFolder,
