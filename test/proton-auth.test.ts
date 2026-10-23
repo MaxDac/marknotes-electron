@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RemoteUnavailableError, type DriveAccount } from '../src/shared/types';
 import { PROTON_APP_VERSION } from '../src/main/config';
 import { ProtonApiError, ProtonAuthClient } from '../src/main/connectors/proton/authClient';
 import { ProtonHttpClient, ProtonSessionHolder } from '../src/main/connectors/proton/httpClient';
-import { ProtonConnector } from '../src/main/connectors/proton/index';
+import { PENDING_LOGIN_TTL_MS, ProtonConnector } from '../src/main/connectors/proton/index';
 import { sessionFromJson, type ProtonSession } from '../src/main/connectors/proton/session';
 import {
   concatBytes,
@@ -306,6 +306,22 @@ describe('ProtonConnector', () => {
     await expect(connector.submitTwoFactor(result.pendingId, '123456')).rejects.toBeInstanceOf(
       ProtonApiError,
     );
+  });
+
+  it('forgets an abandoned two-factor login (and its password) after the TTL', async () => {
+    server.twoFactorEnabled = 1;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const result = await connector.login('alice', PASSWORD);
+      if (result.kind !== 'twoFactor') throw new Error('expected two-factor');
+      await vi.advanceTimersByTimeAsync(PENDING_LOGIN_TTL_MS);
+      expect(server.paths()).toContain('DELETE /core/v4/auth');
+      await expect(connector.submitTwoFactor(result.pendingId, '123456')).rejects.toBeInstanceOf(
+        ProtonApiError,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('signOut revokes the session and deletes the vault entry', async () => {

@@ -6,7 +6,7 @@ import { summary, type SyncConflict } from '../../../shared/syncEngine';
 import type { DriveAccount } from '../../../shared/types';
 import type { ProviderInfo } from '../../../preload/api';
 import { api, IpcRemoteDriveStore, unwrap } from './api';
-import { IdbBaseContentStore, IdbSyncMetadataStore, type Db, type Settings } from './db';
+import { deleteLocalData, IdbBaseContentStore, IdbSyncMetadataStore, type Db, type Settings } from './db';
 
 /** A connected drive and the outcome of its last sync. */
 export interface DriveStatus {
@@ -126,18 +126,38 @@ export class SyncManager {
     await this.syncNow();
   }
 
-  /** Disconnects a drive. Local notes are kept and nothing is deleted from the drive. */
-  removeDrive(account: DriveAccount): Promise<void> {
+  /**
+   * Disconnects a drive. Nothing is deleted from the drive. Local notes are kept unless `deleteLocalData` is set
+   * and no other drive is connected (with another drive, the deletion would be synced to it).
+   */
+  removeDrive(account: DriveAccount, options: { deleteLocalData?: boolean } = {}): Promise<void> {
     return this.locked(async () => {
       await unwrap(api().removeDrive(account.id)).catch(() => undefined);
       await new IdbSyncMetadataStore(this.db, account.id).clear();
       await new IdbBaseContentStore(this.db, account.id).clear();
       await this.settings.delete(statusKey(account.id));
-      await this.refreshDrives();
+      const remaining = await this.refreshDrives();
+      if (options.deleteLocalData && remaining.length === 0) {
+        await deleteLocalData(this.db);
+        this.update({ conflicts: [], message: `Disconnected ${account.label} and deleted the local notes` });
+        return;
+      }
       this.update({
         conflicts: this.state.conflicts.filter((c) => c.driveId !== account.id),
         message: `Disconnected ${account.label}`,
       });
+    });
+  }
+
+  /**
+   * Disconnects every drive, then deletes the notes, attachments and sync state stored on this device. Nothing is
+   * deleted from the drives; if a drive cannot be disconnected, no local data is deleted.
+   */
+  deleteAllLocalData(): Promise<void> {
+    return this.locked(async () => {
+      for (const account of await unwrap(api().drives())) await unwrap(api().removeDrive(account.id));
+      await deleteLocalData(this.db);
+      this.update({ drives: [], conflicts: [], message: null });
     });
   }
 

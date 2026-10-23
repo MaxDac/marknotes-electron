@@ -98,6 +98,7 @@ jobs:
         run: |
           if [ -z "$CSC_LINK" ]; then
             unset CSC_LINK
+            echo "::warning title=Unsigned build::No CSC_LINK secret: the ${{ matrix.target }} installers are not code signed, so the OS will warn users and cannot verify the publisher."
           fi
           npm run dist -- ${{ matrix.target }} --publish never
       - name: Upload installers
@@ -189,6 +190,11 @@ jobs:
             echo "| Commit | \`$GITHUB_SHA\` |"
             echo "| Code signing (CSC_LINK) | $SIGNED |"
             echo "| macOS notarization (APPLE_ID) | $NOTARIZED |"
+            if [ "$SIGNED" != "true" ]; then
+              echo
+              echo "> [!WARNING]"
+              echo "> These installers are **not code signed**. Mention it in the release notes and publish the SHA-256 checksums."
+            fi
             if [ -f dist/SHA256SUMS ]; then
               echo
               echo "### Assets"

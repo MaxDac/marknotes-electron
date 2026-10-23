@@ -492,7 +492,7 @@ export function Editor(props: {
       <div className="editor-body">
         <div ref={host} style={mode === 'preview' ? { display: 'none' } : undefined} />
         {mode !== 'edit' && text !== null && (
-          <Preview text={text} index={previewIndex} onNoteLink={openLinkedNote} />
+          <Preview key={props.path} text={text} index={previewIndex} onNoteLink={openLinkedNote} />
         )}
       </div>
       {showPopup && (

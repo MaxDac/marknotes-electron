@@ -550,6 +550,22 @@ textarea.merged {
   min-height: 40px;
   border: 1px dashed var(--danger);
 }
+.preview img.remote,
+.preview img.blocked {
+  min-width: 120px;
+  min-height: 40px;
+  border: 1px dashed var(--border);
+}
+.remote-images {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
 .preview a.note-link {
   text-decoration: none;
   border-bottom: 1px dotted var(--primary);

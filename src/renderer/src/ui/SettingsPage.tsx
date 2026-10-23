@@ -6,6 +6,7 @@ import type { Page } from '../App';
 import type { DriveStatus } from '../data/syncManager';
 import { ConfirmDialog } from './Dialog';
 import { errorMessage, useApp, useSyncState } from './context';
+import { StorageWarning } from './StorageWarning';
 import { PALETTES, THEME_MODES, type ThemeColor } from './theme';
 
 export function SettingsPage(props: { navigate(page: Page): void }) {
@@ -15,6 +16,10 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
   const [confirmClean, setConfirmClean] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [cleanMessage, setCleanMessage] = useState<string | null>(null);
+  const [deleteLocal, setDeleteLocal] = useState(false);
+  const [confirmWipe, setConfirmWipe] = useState(false);
+  const [wipeError, setWipeError] = useState<string | null>(null);
+  const lastDrive = state.drives.length === 1;
 
   return (
     <>
@@ -124,6 +129,19 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
             </p>
           )}
 
+          <h2>Privacy</h2>
+          <StorageWarning />
+          <p className="small">
+            Notes are stored on this device so that you can read and edit them offline. Images from the web
+            are only loaded when you ask for them in a note.
+          </p>
+          <div className="row">
+            <button className="outlined danger" onClick={() => setConfirmWipe(true)}>
+              Delete all local data
+            </button>
+          </div>
+          {wipeError && <p className="error small">{wipeError}</p>}
+
           <h2>About</h2>
           <p className="about-logo">
             <img src={logo} alt="" className="logo" />
@@ -138,11 +156,49 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
       {disconnect && (
         <ConfirmDialog
           title={`Disconnect ${PROVIDER_NAMES[disconnect.account.provider]}?`}
-          message="Notes stay on this device and on the drive."
+          message={
+            lastDrive ? 'Nothing is deleted from the drive.' : 'Notes stay on this device and on the drive.'
+          }
           confirm="Disconnect"
           danger
-          onClose={() => setDisconnect(null)}
-          onConfirm={() => void sync.removeDrive(disconnect.account)}
+          onClose={() => {
+            setDisconnect(null);
+            setDeleteLocal(false);
+          }}
+          onConfirm={() => {
+            const wipe = lastDrive && deleteLocal;
+            void sync
+              .removeDrive(disconnect.account, { deleteLocalData: wipe })
+              .then(() => wipe && window.location.reload());
+          }}
+        >
+          {lastDrive && (
+            <label className="row">
+              <input
+                type="checkbox"
+                checked={deleteLocal}
+                data-testid="delete-local-notes"
+                onChange={(e) => setDeleteLocal(e.target.checked)}
+              />
+              Also delete the notes stored on this device
+            </label>
+          )}
+        </ConfirmDialog>
+      )}
+      {confirmWipe && (
+        <ConfirmDialog
+          title="Delete all local data?"
+          message="Every drive is disconnected, then the notes, images and sync data stored on this device are deleted. Nothing is deleted from the drives: connect a drive again to download your notes. Notes that were never synced are lost."
+          confirm="Delete"
+          danger
+          onClose={() => setConfirmWipe(false)}
+          onConfirm={() => {
+            setWipeError(null);
+            sync.deleteAllLocalData().then(
+              () => window.location.reload(),
+              (e) => setWipeError(`Could not delete the local data: ${errorMessage(e)}`),
+            );
+          }}
         />
       )}
       {confirmClean && (

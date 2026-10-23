@@ -32,7 +32,11 @@ export interface ProtonConnectorDeps {
 interface PendingLogin {
   session: ProtonSession;
   password: string;
+  timer: ReturnType<typeof setTimeout>;
 }
+
+/** How long a login waiting for its two-factor code keeps the password in memory. */
+export const PENDING_LOGIN_TTL_MS = 10 * 60 * 1000;
 
 interface CachedStore {
   key: string;
@@ -70,7 +74,9 @@ export class ProtonConnector implements DriveConnector {
     const result = await this.auth.login(username.trim(), password);
     if (result.kind === 'twoFactorRequired') {
       const pendingId = randomUUID();
-      this.pending.set(pendingId, { session: result.session, password });
+      const timer = setTimeout(() => void this.cancelLogin(pendingId), PENDING_LOGIN_TTL_MS);
+      timer.unref?.();
+      this.pending.set(pendingId, { session: result.session, password, timer });
       return { kind: 'twoFactor', pendingId };
     }
     return { kind: 'signedIn', account: await this.complete(result.session, password) };
@@ -82,13 +88,18 @@ export class ProtonConnector implements DriveConnector {
     if (!pending) throw new ProtonApiError(0, 'The login expired, please log in again.');
     const session = await this.auth.submitTwoFactor(pending.session, code);
     this.pending.delete(pendingId);
+    clearTimeout(pending.timer);
     return this.complete(session, pending.password);
   }
 
+  /** Forgets a login waiting for its two-factor code (and the password it holds), logging the session out. */
   async cancelLogin(pendingId: string): Promise<void> {
     const pending = this.pending.get(pendingId);
     this.pending.delete(pendingId);
-    if (pending) await this.auth.logoutQuietly(pending.session);
+    if (pending) {
+      clearTimeout(pending.timer);
+      await this.auth.logoutQuietly(pending.session);
+    }
   }
 
   signIn(): Promise<SignedInAccount | null> {

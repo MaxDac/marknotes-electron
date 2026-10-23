@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, session, shell, type IpcMainInvokeEvent } from 'electron';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import iconPath from '../../build/icon.png?asset';
 import type { RemoteOp } from '../preload/api';
 import type { DriveProvider } from '../shared/types';
@@ -8,20 +9,29 @@ import { createConnectors } from './connectors/registry';
 import type { DriveConnector } from './connectors/types';
 import { PRERELEASE_BUILD } from './config';
 import { DriveService } from './driveService';
+import { isAppUrl, isTrustedSender } from './security';
 import { loadElectronUpdater, UpdateController } from './updater';
-import { FileSecretVault } from './vault';
+import { createSecretVault, secureStorageStatus, type SecureStorageStatus } from './vault';
 
-const e2e = process.env.MARKNOTES_E2E === '1';
-if (process.env.MARKNOTES_USER_DATA) app.setPath('userData', process.env.MARKNOTES_USER_DATA);
+// Test and development switches only apply to unpackaged builds, never to an installed app.
+const devEnv = (name: string) => (app.isPackaged ? undefined : process.env[name]);
+const e2e = devEnv('MARKNOTES_E2E') === '1';
+// A separate profile folder (tests, the Linux package smoke test, portable setups); it cannot load other code.
+const userDataOverride = process.env.MARKNOTES_USER_DATA;
+if (userDataOverride) app.setPath('userData', userDataOverride);
+const devServerUrl = devEnv('ELECTRON_RENDERER_URL') || undefined;
+const indexHtml = join(import.meta.dirname, '../renderer/index.html');
+const appUrl = devServerUrl ?? pathToFileURL(indexHtml).href;
 
 const openExternal = async (url: string) => {
   if (!/^https?:\/\//i.test(url)) throw new Error('Only web links can be opened');
   await shell.openExternal(url);
 };
 
-function createService(): DriveService {
+async function createService(): Promise<{ service: DriveService; storage: SecureStorageStatus }> {
   const userData = app.getPath('userData');
   let connectors: Record<DriveProvider, DriveConnector>;
+  let storage: SecureStorageStatus = 'secure';
   if (e2e) {
     connectors = {
       proton: new FakeConnector('proton'),
@@ -29,10 +39,11 @@ function createService(): DriveService {
       onedrive: new FakeConnector('onedrive'),
     };
   } else {
-    const vault = new FileSecretVault(join(userData, 'credentials.bin'), safeStorage);
+    storage = secureStorageStatus(safeStorage);
+    const vault = await createSecretVault(join(userData, 'credentials.bin'), safeStorage, storage);
     connectors = createConnectors({ vault, openExternal });
   }
-  return new DriveService(join(userData, 'drives.json'), connectors);
+  return { service: new DriveService(join(userData, 'drives.json'), connectors), storage };
 }
 
 function errorMessage(e: unknown): string {
@@ -43,8 +54,14 @@ function errorMessage(e: unknown): string {
   return String(e);
 }
 
+const senderOf = (event: IpcMainInvokeEvent) => {
+  const frame = event.senderFrame;
+  return { frameUrl: frame?.url ?? null, isMainFrame: !!frame && frame.parent === null };
+};
+
 function handle(channel: string, fn: (...args: never[]) => unknown) {
-  ipcMain.handle(channel, async (_event, ...args: unknown[]) => {
+  ipcMain.handle(channel, async (event, ...args: unknown[]) => {
+    if (!isTrustedSender(senderOf(event), appUrl)) return { ok: false, error: 'Untrusted sender' };
     try {
       return { ok: true, value: await (fn as (...a: unknown[]) => unknown)(...args) };
     } catch (e) {
@@ -70,8 +87,9 @@ function createUpdater(): UpdateController {
   );
 }
 
-function registerIpc(service: DriveService, updater: UpdateController) {
+function registerIpc(service: DriveService, storage: SecureStorageStatus, updater: UpdateController) {
   handle('app:deviceId', () => service.deviceId());
+  handle('app:secureStorage', () => storage);
   handle('app:openExternal', (url: string) => openExternal(url));
   handle('drives:providers', () => service.providers());
   handle('drives:list', () => service.drives());
@@ -79,6 +97,7 @@ function registerIpc(service: DriveService, updater: UpdateController) {
   handle('drives:cancelSignIn', () => service.cancelSignIn());
   handle('drives:protonLogin', (u: string, p: string) => service.protonLogin(u, p));
   handle('drives:protonTwoFactor', (id: string, code: string) => service.protonTwoFactor(id, code));
+  handle('drives:protonCancel', (id: string) => service.protonCancel(id));
   handle('drives:listFolders', (id: string, path: string) => service.listFolders(id, path));
   handle('drives:add', (id: string, options) => service.addDrive(id, options));
   handle('drives:discardSignIn', (id: string) => service.discardSignIn(id));
@@ -127,8 +146,23 @@ function createWindow() {
       void openExternal(url).catch(() => undefined);
     }
   });
-  if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL);
-  else void win.loadFile(join(import.meta.dirname, '../renderer/index.html'));
+  if (devServerUrl) void win.loadURL(devServerUrl);
+  else void win.loadFile(indexHtml);
+}
+
+/**
+ * The app needs no camera, microphone, location, notifications…: every permission is denied except writing to the
+ * clipboard ("Copy link" in the editor), and only for the app page.
+ */
+function denyPermissions() {
+  const allowed = (permission: string, url: string) =>
+    permission === 'clipboard-sanitized-write' && isAppUrl(url, appUrl);
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback) =>
+    callback(allowed(permission, wc.getURL())),
+  );
+  session.defaultSession.setPermissionCheckHandler((wc, permission) =>
+    allowed(permission, wc?.getURL() ?? ''),
+  );
 }
 
 if (!e2e && !app.requestSingleInstanceLock()) {
@@ -141,9 +175,11 @@ if (!e2e && !app.requestSingleInstanceLock()) {
       win.focus();
     }
   });
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
+    denyPermissions();
     const updater = createUpdater();
-    registerIpc(createService(), updater);
+    const { service, storage } = await createService();
+    registerIpc(service, storage, updater);
     createWindow();
     void updater.start();
     app.on('activate', () => {
