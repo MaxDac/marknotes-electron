@@ -29,11 +29,13 @@ class ScopedStore implements RemoteDriveStore {
   download(entry: RemoteEntry) {
     return this.drive.download({ ...entry, path: this.abs(entry.path) });
   }
-  async uploadNew(path: string, bytes: Uint8Array) {
-    return this.rel(await this.drive.uploadNew(this.abs(path), bytes));
+  async uploadNew(path: string, bytes: Uint8Array, modifiedMillis?: number) {
+    return this.rel(await this.drive.uploadNew(this.abs(path), bytes, modifiedMillis));
   }
-  async uploadRevision(entry: RemoteEntry, bytes: Uint8Array) {
-    return this.rel(await this.drive.uploadRevision({ ...entry, path: this.abs(entry.path) }, bytes));
+  async uploadRevision(entry: RemoteEntry, bytes: Uint8Array, modifiedMillis?: number) {
+    return this.rel(
+      await this.drive.uploadRevision({ ...entry, path: this.abs(entry.path) }, bytes, modifiedMillis),
+    );
   }
   async createFolder(path: string) {
     return this.rel(await this.drive.createFolder(this.abs(path)));

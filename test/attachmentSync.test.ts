@@ -9,6 +9,9 @@ import { InMemoryBaseContentStore, InMemorySyncMetadataStore } from '../src/shar
 const PNG = `attachments/${'a'.repeat(64)}.png`;
 const JPG = `attachments/${'b'.repeat(64)}.jpg`;
 
+/** The attachment path of 	ext, named by its SHA-256 as downloads require. */
+const named = async (text: string, ext: string) => `attachments/${await sha256Hex(utf8.encode(text))}.${ext}`;
+
 describe('SyncEngine attachments', () => {
   let local: NoteStore;
   let remote: FakeRemoteDriveStore;
@@ -40,10 +43,11 @@ describe('SyncEngine attachments', () => {
   });
 
   it('downloads remote attachments and ignores other files in the attachments folder', async () => {
-    remote.putFile(JPG, 'jpeg bytes');
+    const jpg = await named('jpeg bytes', 'jpg');
+    remote.putFile(jpg, 'jpeg bytes');
     remote.putFile('attachments/notes.txt', 'x');
     expect((await syncClean()).downloaded).toBe(1);
-    expect(await local.read(JPG)).toBe('jpeg bytes');
+    expect(await local.read(jpg)).toBe('jpeg bytes');
     expect(await local.exists('attachments/notes.txt')).toBe(false);
   });
 
@@ -80,16 +84,29 @@ describe('SyncEngine attachments', () => {
   });
 
   it('propagates deletions both ways', async () => {
+    const jpg = await named('jpg', 'jpg');
     await local.writeBytes(PNG, new Uint8Array([1]));
-    remote.putFile(JPG, 'jpg');
+    remote.putFile(jpg, 'jpg');
     await syncClean();
 
     await local.delete(PNG);
-    remote.remove(JPG);
+    remote.remove(jpg);
     const result = await syncClean();
     expect(result.deletedRemote).toBe(1);
     expect(result.deletedLocal).toBe(1);
     expect(remote.exists(PNG)).toBe(false);
+    expect(await local.exists(jpg)).toBe(false);
+  });
+
+  it('rejects a downloaded attachment whose bytes do not match its name', async () => {
+    remote.putFile(JPG, 'not the named bytes');
+    const result = await engine.sync();
+    expect(result.errors).toEqual([
+      `attachments/${'b'.repeat(64)}.jpg: downloaded bytes don't match the attachment name`,
+    ]);
+    expect(result.downloaded).toBe(0);
     expect(await local.exists(JPG)).toBe(false);
+    // Nothing was recorded: the next sync tries again.
+    expect((await engine.sync()).errors).toHaveLength(1);
   });
 });

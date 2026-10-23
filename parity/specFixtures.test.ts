@@ -29,7 +29,7 @@ import {
   type Chord,
   type ChordSequence,
 } from '../src/shared/chords';
-import { isNoteId, noteIdOf, splitFrontMatter, withNoteId } from '../src/shared/frontMatter';
+import { isNoteId, joinFrontMatter, noteIdOf, splitFrontMatter, withNoteId } from '../src/shared/frontMatter';
 
 import { buildNoteIndex, filterNotes, findMention, noteIdFromHref, noteLink } from '../src/shared/noteLinks';
 import { MemoryNodeBackend, NoteStore } from '../src/shared/noteStore';
@@ -71,6 +71,7 @@ const runners: Record<string, Runner> = {
     const { frontMatter, body } = splitFrontMatter(text);
     return { frontMatter, body };
   },
+  'front-matter/with-body': ({ frontMatter, body }) => ({ text: joinFrontMatter(frontMatter, body) }),
 
   'note-links/link-markdown': ({ title, id }) => ({ markdown: noteLink(title, id) }),
   'note-links/parse-href': ({ href }) => ({ id: noteIdFromHref(href) }),

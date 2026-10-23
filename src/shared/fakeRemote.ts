@@ -1,6 +1,6 @@
 import { MANIFEST_PATH } from './manifestPath';
 import * as P from './paths';
-import type { RemoteDriveStore, RemoteEntry } from './types';
+import { RemoteChangedError, type RemoteDriveStore, type RemoteEntry } from './types';
 
 interface FakeNode {
   id: string;
@@ -56,7 +56,7 @@ export class FakeRemoteDriveStore implements RemoteDriveStore {
     }
   }
 
-  async uploadNew(path: string, bytes: Uint8Array): Promise<RemoteEntry> {
+  async uploadNew(path: string, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
     this.calls.push(`uploadNew:${path}`);
     if (this.nodes.has(path)) throw new Error(`${path} already exists`);
     this.ensureParents(path);
@@ -65,19 +65,19 @@ export class FakeRemoteDriveStore implements RemoteDriveStore {
       isFolder: false,
       version: this.nextVersion(),
       bytes,
-      modified: Date.now(),
+      modified: modifiedMillis ?? Date.now(),
     };
     this.nodes.set(path, node);
     return this.entry(path, node);
   }
 
-  async uploadRevision(entry: RemoteEntry, bytes: Uint8Array): Promise<RemoteEntry> {
+  async uploadRevision(entry: RemoteEntry, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
     this.calls.push(`uploadRevision:${entry.path}`);
     const n = this.nodes.get(entry.path);
     if (!n || n.id !== entry.id) throw new Error(`${entry.path} not found`);
     n.bytes = bytes;
     n.version = this.nextVersion();
-    n.modified = Date.now();
+    n.modified = modifiedMillis ?? Date.now();
     return this.entry(entry.path, n);
   }
 
@@ -102,8 +102,11 @@ export class FakeRemoteDriveStore implements RemoteDriveStore {
     return this.entry(path, node);
   }
 
+  /** Files are only deleted while still at `entry.version`, like the real drives. */
   async delete(entry: RemoteEntry): Promise<void> {
     this.calls.push(`delete:${entry.path}`);
+    const n = this.nodes.get(entry.path);
+    if (n && !n.isFolder && n.version !== entry.version) throw new RemoteChangedError(entry.path);
     this.remove(entry.path);
   }
 

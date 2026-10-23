@@ -7,7 +7,7 @@ import {
   type DropboxTokens,
 } from '../src/main/connectors/dropbox';
 import type { SecretVault } from '../src/main/connectors/types';
-import { RemoteUnavailableError, type DriveAccount } from '../src/shared/types';
+import { RemoteChangedError, RemoteUnavailableError, type DriveAccount } from '../src/shared/types';
 
 interface Recorded {
   url: string;
@@ -290,10 +290,43 @@ describe('DropboxDriveStore', () => {
     api.on('files/delete_v2', () =>
       routeError({ '.tag': 'path_lookup', path_lookup: { '.tag': 'not_found' } }),
     );
+    api.on('files/get_metadata', () => routeError({ '.tag': 'path', path: { '.tag': 'not_found' } }));
     await store.delete(entries.get('Todo.md')!);
 
     api.on('files/delete_v2', () => routeError({ '.tag': 'path_write', path_write: { '.tag': 'no_write' } }));
     await expect(store.delete(entries.get('Todo.md')!)).rejects.toThrow(/Dropbox error 409/);
+  });
+
+  it('deletes files only at the synced revision', async () => {
+    const entries = new Map((await store.snapshot()).map((e) => [e.path, e]));
+    const todo = entries.get('Todo.md')!;
+    api.on('files/delete_v2', (req) => json({ metadata: { path: (req.arg as { path: string }).path } }));
+    await store.delete(todo);
+    expect(api.calls('files/delete_v2')[0].arg).toEqual({
+      path: '/Documents/MarkNotes/Todo.md',
+      parent_rev: todo.version,
+    });
+
+    // A newer revision on the drive: the delete is refused and reported as a change.
+    api.on('files/delete_v2', () =>
+      routeError({ '.tag': 'path_lookup', path_lookup: { '.tag': 'not_found' } }),
+    );
+    api.on('files/get_metadata', () => json(file('/Documents/MarkNotes/Todo.md', 'newer')));
+    await expect(store.delete(todo)).rejects.toBeInstanceOf(RemoteChangedError);
+  });
+
+  it('writes and reads the local modification time as client_modified', async () => {
+    api.on('files/upload', (req) =>
+      json(
+        untagged({
+          ...file((req.arg as { path: string }).path, 'r9'),
+          client_modified: (req.arg as { client_modified: string }).client_modified,
+        }),
+      ),
+    );
+    const created = await store.uploadNew('Work/New.md', bytes('x'), Date.parse('2023-05-06T07:08:09.123Z'));
+    expect(api.calls('files/upload').at(-1)!.arg).toMatchObject({ client_modified: '2023-05-06T07:08:09Z' });
+    expect(created.modifiedMillis).toBe(Date.parse('2023-05-06T07:08:09Z'));
   });
 
   it('reads null until the manifest is written, then round-trips it', async () => {

@@ -76,9 +76,13 @@ export function withNoteId(text: string, id: string): string {
   return fm.substring(0, openEnd) + nextInner + fm.substring(closeStart) + split.body;
 }
 
-/** Re-attaches a front-matter block (as returned by splitFrontMatter) to an edited body. */
+/**
+ * Re-attaches a front-matter block (as returned by splitFrontMatter) to an edited body. A block without a final line
+ * break gets one before a non-empty body: CRLF when its opening `---` line ends with CRLF, LF otherwise.
+ */
 export function joinFrontMatter(frontMatter: string, body: string): string {
-  return frontMatter + body;
+  if (frontMatter === '' || body === '' || frontMatter.endsWith('\n')) return frontMatter + body;
+  return frontMatter + (/^---[ \t]*\r\n/.test(frontMatter) ? '\r\n' : '\n') + body;
 }
 
 /** Content of a brand-new note with a fresh id. */

@@ -22,11 +22,11 @@ export class IpcRemoteDriveStore implements RemoteDriveStore {
   download(entry: RemoteEntry) {
     return this.call<Uint8Array>({ op: 'download', entry });
   }
-  uploadNew(path: string, bytes: Uint8Array) {
-    return this.call<RemoteEntry>({ op: 'uploadNew', path, bytes });
+  uploadNew(path: string, bytes: Uint8Array, modifiedMillis?: number) {
+    return this.call<RemoteEntry>({ op: 'uploadNew', path, bytes, modifiedMillis });
   }
-  uploadRevision(entry: RemoteEntry, bytes: Uint8Array) {
-    return this.call<RemoteEntry>({ op: 'uploadRevision', entry, bytes });
+  uploadRevision(entry: RemoteEntry, bytes: Uint8Array, modifiedMillis?: number) {
+    return this.call<RemoteEntry>({ op: 'uploadRevision', entry, bytes, modifiedMillis });
   }
   createFolder(path: string) {
     return this.call<RemoteEntry>({ op: 'createFolder', path });

@@ -15,13 +15,19 @@ export interface RemoteEntry {
 export interface RemoteDriveStore {
   snapshot(): Promise<RemoteEntry[]>;
   download(entry: RemoteEntry): Promise<Uint8Array>;
-  /** Uploads a new file at `path`, creating missing parent folders. */
-  uploadNew(path: string, bytes: Uint8Array): Promise<RemoteEntry>;
-  /** Uploads new content for an existing file. */
-  uploadRevision(entry: RemoteEntry, bytes: Uint8Array): Promise<RemoteEntry>;
+  /**
+   * Uploads a new file at `path`, creating missing parent folders. `modifiedMillis` is the local edit time, stored
+   * as the file's modification time (Dropbox `client_modified`, OneDrive `fileSystemInfo`, Proton claimed time).
+   */
+  uploadNew(path: string, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry>;
+  /** Uploads new content for an existing file, only if it is still at `entry.version`. */
+  uploadRevision(entry: RemoteEntry, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry>;
   /** Creates a folder at `path`, creating missing parents. Returns the existing one if present. */
   createFolder(path: string): Promise<RemoteEntry>;
-  /** Moves the entry to the remote trash. */
+  /**
+   * Moves the entry to the remote trash. Files are only deleted while still at `entry.version`: otherwise it
+   * throws (a step error, so the record is kept and the next sync downloads the change).
+   */
   delete(entry: RemoteEntry): Promise<void>;
   /** Reads the sync manifest; null when missing. */
   readManifest(): Promise<Uint8Array | null>;
@@ -31,6 +37,14 @@ export interface RemoteDriveStore {
 
 export class RemoteUnavailableError extends Error {
   override name = 'RemoteUnavailableError';
+}
+
+/** A conditional write or delete found the remote file at another version than the one planned. */
+export class RemoteChangedError extends Error {
+  override name = 'RemoteChangedError';
+  constructor(path: string) {
+    super(`${path} changed on the drive since the sync started`);
+  }
 }
 
 export type DriveProvider = 'proton' | 'dropbox' | 'onedrive';

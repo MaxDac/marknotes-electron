@@ -205,9 +205,9 @@ export class DriveService {
       case 'download':
         return store.download(request.entry);
       case 'uploadNew':
-        return store.uploadNew(request.path, request.bytes);
+        return store.uploadNew(request.path, request.bytes, request.modifiedMillis);
       case 'uploadRevision':
-        return store.uploadRevision(request.entry, request.bytes);
+        return store.uploadRevision(request.entry, request.bytes, request.modifiedMillis);
       case 'createFolder':
         return store.createFolder(request.path);
       case 'delete':

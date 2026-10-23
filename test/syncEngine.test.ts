@@ -419,6 +419,117 @@ describe('SyncEngine', () => {
     expect(remote.calls).toEqual([]);
   });
 
+  it('a note saved while the sync runs is never overwritten by a download', async () => {
+    await local.write('n.md', 'v1');
+    await syncClean();
+    remote.putFile('n.md', 'v2');
+    const download = remote.download.bind(remote);
+    remote.download = async (entry) => {
+      await local.write('n.md', 'typed meanwhile');
+      return download(entry);
+    };
+
+    const result = await syncClean();
+
+    expect(result.downloaded).toBe(0);
+    expect(await local.read('n.md')).toBe('typed meanwhile');
+  });
+
+  it('a note saved while the sync runs is never deleted', async () => {
+    await local.write('z.md', 'v1');
+    await syncClean();
+    remote.remove('z.md');
+    remote.putFile('a.md', 'new');
+    const download = remote.download.bind(remote);
+    remote.download = async (entry) => {
+      await local.write('z.md', 'typed meanwhile');
+      return download(entry);
+    };
+
+    const result = await syncClean();
+
+    expect(result.deletedLocal).toBe(0);
+    expect(await local.read('z.md')).toBe('typed meanwhile');
+    remote.download = download;
+    await syncClean();
+    expect(remote.content('z.md')).toBe('typed meanwhile');
+  });
+
+  it('a drive file changed after planning is not deleted and keeps its record', async () => {
+    await local.write('n.md', 'v1');
+    await syncClean();
+    await local.delete('n.md');
+    const snapshot = remote.snapshot.bind(remote);
+    remote.snapshot = async () => {
+      const entries = await snapshot();
+      remote.put('n.md', 'edited on another device', 5000);
+      return entries;
+    };
+
+    const result = await engine.sync();
+
+    expect(result.errors).toEqual(['n.md: n.md changed on the drive since the sync started']);
+    expect(result.deletedRemote).toBe(0);
+    expect(remote.content('n.md')).toBe('edited on another device');
+    expect((await metadata.all()).map((r) => r.path)).toContain('n.md');
+    remote.snapshot = snapshot;
+    await syncClean();
+    expect(await local.read('n.md')).toBe('edited on another device');
+  });
+
+  it('the local edit time travels with uploads and downloads', async () => {
+    now = 1234;
+    await local.write('mine.md', 'mine');
+    remote.put('theirs.md', 'theirs', 777);
+    now = 9999;
+
+    await syncClean();
+
+    expect(remote.nodes.get('mine.md')!.modified).toBe(1234);
+    expect((await local.entry('theirs.md'))!.modifiedMillis).toBe(777);
+  });
+
+  it('counts folders created locally as local changes', async () => {
+    remote.putFolder('y');
+    const result = await syncClean();
+    expect(result.foldersCreated).toBe(1);
+    expect(localChanges(result)).toBe(1);
+  });
+
+  it('a conflict writes the copy locally, then the note, then uploads the copy', async () => {
+    await editBothSides('a\nb\n', 'a\nlocal\n', 2000, 'a\nremote\n', 3000);
+    const steps: string[] = [];
+    const writeBytes = local.writeBytes.bind(local);
+    local.writeBytes = async (path, bytes, modified) => {
+      steps.push(`write:${path}`);
+      return writeBytes(path, bytes, modified);
+    };
+    const uploadNew = remote.uploadNew.bind(remote);
+    remote.uploadNew = async (path, bytes, modified) => {
+      steps.push(`upload:${path}`);
+      return uploadNew(path, bytes, modified);
+    };
+
+    await syncClean();
+
+    expect(steps).toEqual([`write:${COPY}`, 'write:n.md', `upload:${COPY}`]);
+  });
+
+  it('a conflicted copy that cannot be written leaves the note untouched', async () => {
+    await editBothSides('a\nb\n', 'a\nlocal\n', 2000, 'a\nremote\n', 3000);
+    const writeBytes = local.writeBytes.bind(local);
+    local.writeBytes = async (path, bytes, modified) => {
+      if (path === COPY) throw new Error('disk full');
+      return writeBytes(path, bytes, modified);
+    };
+
+    const result = await engine.sync();
+
+    expect(result.errors).toEqual(['n.md: disk full']);
+    expect(await local.read('n.md')).toBe('a\nlocal\n');
+    expect(remote.exists(COPY)).toBe(false);
+  });
+
   it('summary and localChanges describe a result', () => {
     const result: SyncResult = {
       uploaded: 1,
@@ -428,8 +539,10 @@ describe('SyncEngine', () => {
       conflicts: [{ path: 'n.md', copyPath: COPY, winner: 'local', baseText: null, driveId: 'd' }],
       errors: ['e'],
       merged: 5,
+      foldersCreated: 0,
     };
     expect(summary(result)).toBe('↑1 ↓2, merged 5, deleted 7, 1 conflicted copy(ies), 1 error(s)');
     expect(localChanges(result)).toBe(11);
+    expect(localChanges({ ...result, foldersCreated: 2 })).toBe(13);
   });
 });

@@ -12,7 +12,7 @@ import type {
   UploadMetadata,
 } from '../src/main/connectors/proton/sdk';
 import { MemorySecretVault } from '../src/main/vault';
-import type { DriveAccount } from '../src/shared/types';
+import { RemoteChangedError, type DriveAccount } from '../src/shared/types';
 
 interface FakeNode {
   uid: string;
@@ -225,7 +225,7 @@ describe('ProtonDriveStore', () => {
     const root = drive.find('Notes/MarkNotes')!;
     const sub = drive.addRaw(root.uid, 'sub', 'folder');
     drive.addRaw(sub.uid, 'a.md', 'file');
-    drive.addRaw(root.uid, null, 'file');
+    drive.addRaw(root.uid, null, 'file', true);
     drive.addRaw(root.uid, 'trashed.md', 'file', true);
     const fresh = new ProtonDriveStore(drive, 'Notes/MarkNotes');
     const entries = await fresh.snapshot();
@@ -237,6 +237,40 @@ describe('ProtonDriveStore', () => {
       version: '',
       modifiedMillis: 1000,
     });
+  });
+
+  it('fails the snapshot when an entry name cannot be decrypted', async () => {
+    const drive = new FakeDrive();
+    const store = new ProtonDriveStore(drive, 'MarkNotes');
+    await store.snapshot();
+    const sub = drive.addRaw(drive.find('MarkNotes')!.uid, 'sub', 'folder');
+    drive.addRaw(sub.uid, null, 'file');
+    await expect(new ProtonDriveStore(drive, 'MarkNotes').snapshot()).rejects.toThrow(
+      "Couldn't decrypt the name of an entry in /sub",
+    );
+  });
+
+  it('uploads images with their MIME type and the local modification time', async () => {
+    const drive = new FakeDrive();
+    const store = new ProtonDriveStore(drive, 'MarkNotes', () => 42);
+    await store.snapshot();
+    await store.uploadNew(`attachments/${'a'.repeat(64)}.png`, enc('png'), 1234);
+    await store.uploadNew(`attachments/${'b'.repeat(64)}.jpg`, enc('jpg'));
+    expect(drive.uploads[0]).toMatchObject({ mediaType: 'image/png', modificationTime: new Date(1234) });
+    expect(drive.uploads[1]).toMatchObject({ mediaType: 'image/jpeg', modificationTime: new Date(42) });
+  });
+
+  it('deletes a file only at the synced revision', async () => {
+    const drive = new FakeDrive();
+    const store = new ProtonDriveStore(drive, 'MarkNotes');
+    await store.snapshot();
+    const created = await store.uploadNew('note.md', enc('a'));
+    await store.uploadRevision(created, enc('b'));
+    await expect(store.delete(created)).rejects.toBeInstanceOf(RemoteChangedError);
+    expect(paths(await store.snapshot())).toEqual(['note.md']);
+
+    await store.delete((await store.snapshot())[0]);
+    expect(paths(await store.snapshot())).toEqual([]);
   });
 
   it('refuses a sync folder occupied by a file', async () => {
