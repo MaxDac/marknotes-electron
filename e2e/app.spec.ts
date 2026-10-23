@@ -133,6 +133,27 @@ test('notes, folders, editor and preview persist across restarts', async () => {
   await app.close();
 });
 
+test('empty states offer to create a note or a chord sequence', async () => {
+  const userData = newUserData();
+  const { app, page } = await launch(userData);
+  try {
+    await expect(page.getByText('No notes here yet')).toBeVisible();
+    await expect(page.getByTestId('empty-new-note')).toBeVisible();
+    await expect(page.getByTestId('pane-new-note')).toBeVisible();
+    await expect(page.getByTestId('pane-new-chords')).toBeVisible();
+
+    await page.getByTestId('empty-new-chords').click();
+    await expect(page.getByRole('dialog')).toContainText('New chord sequence');
+    await page.getByRole('textbox', { name: 'Name' }).fill('Riffs');
+    await page.getByRole('button', { name: 'Create' }).click();
+    await expect(page.getByTestId('chord-editor')).toBeVisible();
+    await expect(page.getByTestId('entry').filter({ hasText: 'Riffs' })).toContainText('🎸');
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
+
 test('chord sequences open in the chord editor and fall back to text on parse errors', async () => {
   const userData = newUserData();
   let { app, page } = await launch(userData);

@@ -236,6 +236,13 @@ textarea:focus {
   color: var(--muted);
   text-align: center;
 }
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
 .menu {
   position: fixed;
   z-index: 20;

@@ -90,6 +90,21 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
     if (folder === from || P.isAncestor(from, folder)) setFolder(to + folder.substring(from.length));
   };
 
+  const createActions = (testIdPrefix: string) => (
+    <div className="empty-actions">
+      <button
+        className="filled"
+        data-testid={`${testIdPrefix}-new-note`}
+        onClick={() => setDialog({ kind: 'newNote' })}
+      >
+        New note
+      </button>
+      <button data-testid={`${testIdPrefix}-new-chords`} onClick={() => setDialog({ kind: 'newChords' })}>
+        New chord sequence
+      </button>
+    </div>
+  );
+
   return (
     <div className="app" style={props.hidden ? { display: 'none' } : undefined}>
       <div className="topbar">
@@ -170,7 +185,12 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
             <span className="crumb">{folder === '' ? 'All notes' : P.name(folder)}</span>
           </div>
           <div className="entries">
-            {entries.length === 0 && <div className="empty">No notes here yet</div>}
+            {entries.length === 0 && (
+              <div className="empty">
+                No notes here yet
+                {createActions('empty')}
+              </div>
+            )}
             {entries.map((entry) => (
               <div
                 key={entry.path}
@@ -211,7 +231,10 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
           />
         ) : (
           <div className="editor-pane">
-            <div className="empty">Select a note or create a new one.</div>
+            <div className="empty">
+              Select a note or create a new one.
+              {createActions('pane')}
+            </div>
           </div>
         )}
       </div>
