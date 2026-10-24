@@ -8,6 +8,14 @@ and the same sync format, so all MarkNotes apps can share one drive folder.
 > MarkNotes is a personal, non-commercial project. It is not affiliated with or endorsed by Proton AG,
 > and it does not use any Proton logos or branding.
 
+## Other MarkNotes apps
+
+All MarkNotes apps share the same drive folder and note format. Settings → About links to them as well.
+
+- [MarkNotes for Android (F-Droid)](https://f-droid.org/packages/io.github.maxdac.marknotes.libre/)
+- [MarkNotes Pro for Android (GitHub Releases)](https://github.com/MaxDac/MarkNotes/releases)
+- [MarkNotes Web](https://marknotes.fly.dev)
+
 ## Features (parity with Android)
 
 - **Offline-first notes** stored in IndexedDB in the renderer, as a tree of folders and `.md` notes. You can create, open,
