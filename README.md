@@ -40,13 +40,36 @@ and the same sync format, so all MarkNotes apps can share one drive folder.
 - **Proton login**: SRP password login with TOTP. CAPTCHA/human verification, two-password mode and FIDO2-only
   accounts are not supported.
 - **Dropbox / OneDrive login**: OAuth 2 PKCE (Dropbox) and MSAL (OneDrive) in the system browser, with a loopback redirect.
-- Tokens are encrypted with Electron `safeStorage` (OS keychain).
+- Tokens are encrypted with Electron `safeStorage` (OS keychain). See [Security and privacy](#security-and-privacy).
 
 The file format shared with the Android and web apps is specified in [marknotes-spec](https://github.com/MaxDac/marknotes-spec)
 (`spec/` submodule, [spec/note-format.md](spec/note-format.md)); its golden fixtures run against this app in CI.
 See [AGENTS.md](AGENTS.md) for the cross-app parity rules.
 
 Out of scope: search, tags, background sync, local encryption.
+
+## Security and privacy
+
+- **Drive credentials** (OAuth tokens, the Proton session and the key passphrase that decrypts the drive) are kept in
+  `credentials.bin` in the profile folder, encrypted with Electron `safeStorage`: the macOS Keychain, Windows DPAPI or
+  the Linux Secret Service/KWallet. The Proton password is only used to sign in and is never stored; a sign-in waiting
+  for its two-factor code is dropped after 10 minutes or when you leave the form.
+- **Linux without a keyring**: Chromium falls back to a hardcoded key (`basic_text`), which does not protect anything.
+  In that case credentials are only kept in memory (you sign in again after each launch), any older
+  `credentials.bin` is deleted, and Settings and Add drive show a warning.
+- **Notes on this device** are stored in the app's IndexedDB in the profile folder, readable by anything running as
+  your user. **Settings → Delete all local data** disconnects every drive and deletes the local notes, images and sync
+  state (nothing is deleted from the drives). When disconnecting the last drive you can also delete the local notes.
+  Deleted IndexedDB data may stay on disk until the database compacts it.
+- **Remote images** in notes are not loaded: a note could otherwise reveal when and where it is read. Only `https:`
+  images can be loaded, per note and for the current session, with **Load remote images**; other sources (`http:`,
+  `//host`, `file:`, network paths) are never loaded.
+- **Hardening**: sandboxed, context-isolated renderer with a strict CSP; IPC calls are only served to the app page;
+  every web permission except clipboard writes is denied; packaged builds ignore the test and dev server switches
+  and ship with Electron fuses (no `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` or `--inspect`, app loaded only from an
+  integrity-checked `app.asar`, encrypted cookies).
+- **Releases** are only code signed when signing secrets are configured; unsigned releases are flagged in the release
+  workflow. Check downloads against `SHA256SUMS`.
 
 ## Development
 

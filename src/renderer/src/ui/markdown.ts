@@ -6,6 +6,9 @@ import { noteIdFromHref } from '../../../shared/noteLinks';
 const escape = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
+/** Only absolute `https:` URLs can be loaded as remote images, and only after the user asks for it. */
+export const isRemoteImage = (src: string) => /^https:\/\/[^/\\]/i.test(src);
+
 const md = new MarkdownIt({
   html: false,
   linkify: true,
@@ -44,15 +47,23 @@ md.core.ruler.after('inline', 'task-lists', (state) => {
   }
 });
 
-/** Images stored as attachments get a data-attachment attribute; the preview loads them from the note store. */
+/**
+ * Images stored as attachments get a data-attachment attribute; the preview loads them from the note store.
+ * Web images (`https:` only) are not loaded: their address moves to data-remote-src until the user chooses to load
+ * them, so a note cannot reveal when it is read. Any other source (`http:`, `//host`, `file:`, relative paths…) is
+ * dropped.
+ */
 const defaultImage = md.renderer.rules.image!;
 md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const token = tokens[idx];
-  const attachment = attachmentFromSrc(String(token.attrGet('src') ?? ''));
-  if (attachment) {
-    token.attrSet('src', '');
-    token.attrSet('data-attachment', attachment);
-  }
+  const src = String(token.attrGet('src') ?? '');
+  const attachment = attachmentFromSrc(src);
+  token.attrSet('src', '');
+  if (attachment) token.attrSet('data-attachment', attachment);
+  else if (isRemoteImage(src)) {
+    token.attrSet('data-remote-src', src);
+    token.attrJoin('class', 'remote');
+  } else token.attrJoin('class', 'blocked');
   return defaultImage(tokens, idx, options, env, self);
 };
 

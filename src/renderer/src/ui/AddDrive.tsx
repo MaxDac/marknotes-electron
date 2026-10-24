@@ -9,6 +9,7 @@ import {
 } from '../../../shared/types';
 import { api, unwrap } from '../data/api';
 import { errorMessage, useApp } from './context';
+import { StorageWarning } from './StorageWarning';
 
 type Step =
   | { kind: 'choose' }
@@ -70,6 +71,7 @@ export function AddDrive(props: { onDone(): void }) {
           {error && <p className="error">{error}</p>}
           {step.kind === 'choose' && (
             <>
+              <StorageWarning />
               <p>
                 Choose where to sync your notes. You can connect several drives: each one keeps a full copy.
               </p>
@@ -126,18 +128,32 @@ function ProtonLogin(props: { onSignedIn(account: SignedIn): void }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** A login waiting for its two-factor code; abandoned (and its password dropped) when the form goes away. */
+  const pending = useRef<string | null>(null);
+
+  useEffect(
+    () => () => {
+      if (pending.current) void api().protonCancel(pending.current);
+    },
+    [],
+  );
 
   const submit = async () => {
     setBusy(true);
     setError(null);
     try {
       if (pendingId) {
-        props.onSignedIn(await unwrap(api().protonTwoFactor(pendingId, code.trim())));
+        const account = await unwrap(api().protonTwoFactor(pendingId, code.trim()));
+        pending.current = null;
+        props.onSignedIn(account);
       } else {
         const result = await unwrap(api().protonLogin(username.trim(), password));
         setPassword('');
         if (result.kind === 'signedIn') props.onSignedIn(result.account);
-        else setPendingId(result.pendingId);
+        else {
+          pending.current = result.pendingId;
+          setPendingId(result.pendingId);
+        }
       }
     } catch (e) {
       setError(errorMessage(e));
@@ -201,8 +217,9 @@ function ProtonLogin(props: { onSignedIn(account: SignedIn): void }) {
       )}
       {error && <p className="error">{error}</p>}
       <p className="small">
-        Your password is only used to sign in and is never stored. CAPTCHA / human verification is not
-        supported in this version.
+        Your password is never stored. To sync without asking for it again, the keys that decrypt your drive
+        are kept on this device, protected by the system keychain (or only in memory when there is no
+        keychain). CAPTCHA / human verification is not supported in this version.
       </p>
     </form>
   );

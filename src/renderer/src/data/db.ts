@@ -96,6 +96,25 @@ export class IdbBaseContentStore implements BaseContentStore {
   }
 }
 
+/** Settings about the app itself, not the notes: kept when the local data is deleted. */
+const APP_SETTINGS = new Set(['themeMode', 'themeColor']);
+
+/**
+ * Deletes every note, attachment, sync record and base copy stored on this device, with the sync state kept in the
+ * settings. Nothing is deleted from the drives: callers disconnect them first so the deletion is never synced.
+ */
+export async function deleteLocalData(db: Db) {
+  const tx = db.transaction(['nodes', 'syncRecords', 'baseContent', 'settings'], 'readwrite');
+  void tx.objectStore('nodes').clear();
+  void tx.objectStore('syncRecords').clear();
+  void tx.objectStore('baseContent').clear();
+  const settings = tx.objectStore('settings');
+  for (const key of await settings.getAllKeys()) {
+    if (!APP_SETTINGS.has(String(key))) void settings.delete(key);
+  }
+  await tx.done;
+}
+
 /** Small key/value settings. */
 export class Settings {
   constructor(private readonly db: Db) {}

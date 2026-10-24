@@ -2,6 +2,12 @@ import type { DriveAccount, DriveProvider, RemoteEntry, RemoteFolder } from '../
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
+/**
+ * `secure`: an OS keychain protects saved credentials. `weak`: Linux without a keyring, credentials are only kept
+ * in memory until the app quits. `unavailable`: credentials cannot be saved.
+ */
+export type SecureStorageStatus = 'secure' | 'weak' | 'unavailable';
+
 export interface SignedIn {
   id: string;
   provider: DriveProvider;
@@ -49,12 +55,16 @@ export type UpdateStatus =
 export interface MarkNotesApi {
   platform: string;
   deviceId(): Promise<Result<string>>;
+  /** How credentials are protected on this device (see `SecureStorageStatus`). */
+  secureStorage(): Promise<Result<SecureStorageStatus>>;
   providers(): Promise<Result<ProviderInfo[]>>;
   drives(): Promise<Result<DriveAccount[]>>;
   signIn(provider: DriveProvider): Promise<Result<SignedIn | null>>;
   cancelSignIn(): Promise<Result<void>>;
   protonLogin(username: string, password: string): Promise<Result<ProtonLogin>>;
   protonTwoFactor(pendingId: string, code: string): Promise<Result<SignedIn>>;
+  /** Abandons a Proton login waiting for its two-factor code. */
+  protonCancel(pendingId: string): Promise<Result<void>>;
   listFolders(accountId: string, path: string): Promise<Result<RemoteFolder[]>>;
   addDrive(accountId: string, options: AddDriveOptions): Promise<Result<DriveAccount>>;
   discardSignIn(accountId: string): Promise<Result<void>>;

@@ -82,3 +82,76 @@ describe('SyncManager', () => {
     expect(calls).not.toContain('flush');
   });
 });
+
+describe('SyncManager local data deletion', () => {
+  let drives: DriveAccount[];
+  let removeFails: boolean;
+  const OTHER = { ...DRIVE, id: 'd2', label: 'Other' } as DriveAccount;
+
+  beforeEach(() => {
+    drives = [DRIVE];
+    removeFails = false;
+    const ok = <T>(value: T) => Promise.resolve({ ok: true as const, value });
+    (globalThis as { window?: unknown }).window = {
+      marknotes: {
+        providers: () => ok([]),
+        drives: () => ok([...drives]),
+        removeDrive: (id: string) => {
+          calls.push(`removeDrive:${id}`);
+          if (removeFails) return Promise.resolve({ ok: false as const, error: 'nope' });
+          drives = drives.filter((d) => d.id !== id);
+          return ok(undefined);
+        },
+      } as unknown as MarkNotesApi,
+    };
+  });
+
+  const seed = async () => {
+    const notes = new NoteStore(new IdbNodeBackend(db));
+    await notes.write('n.md', 'note');
+    const settings = new Settings(db);
+    await settings.set('themeMode', 'dark');
+    await settings.set('lastSyncSummary', 'Fake: synced');
+    const manager = new SyncManager(notes, db, settings, 'device');
+    await manager.init();
+    return { notes, settings, manager };
+  };
+
+  it('keeps local notes when disconnecting unless asked', async () => {
+    const { manager } = await seed();
+    await manager.removeDrive(DRIVE);
+    expect(await db.getAll('nodes')).not.toHaveLength(0);
+  });
+
+  it('deletes local notes when disconnecting the last drive', async () => {
+    const { manager, settings } = await seed();
+    await manager.removeDrive(DRIVE, { deleteLocalData: true });
+    expect(await db.getAll('nodes')).toHaveLength(0);
+    expect(await settings.get('lastSyncSummary', null)).toBeNull();
+    expect(await settings.get('themeMode', null)).toBe('dark');
+  });
+
+  it('never deletes local notes while another drive is connected', async () => {
+    drives = [DRIVE, OTHER];
+    const { manager } = await seed();
+    await manager.removeDrive(DRIVE, { deleteLocalData: true });
+    expect(await db.getAll('nodes')).not.toHaveLength(0);
+  });
+
+  it('disconnects every drive before deleting all local data', async () => {
+    drives = [DRIVE, OTHER];
+    const { manager } = await seed();
+    await manager.deleteAllLocalData();
+    expect(calls).toEqual(['removeDrive:d1', 'removeDrive:d2']);
+    expect(drives).toEqual([]);
+    expect(await db.getAll('nodes')).toHaveLength(0);
+    expect(manager.current.drives).toEqual([]);
+  });
+
+  it('keeps local data when a drive cannot be disconnected', async () => {
+    const { manager } = await seed();
+    removeFails = true;
+    await expect(manager.deleteAllLocalData()).rejects.toThrow('nope');
+    expect(await db.getAll('nodes')).not.toHaveLength(0);
+  });
+});

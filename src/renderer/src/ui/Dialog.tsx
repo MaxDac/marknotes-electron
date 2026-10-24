@@ -81,6 +81,8 @@ export function ConfirmDialog(props: {
   message: string;
   confirm: string;
   danger?: boolean;
+  /** Extra content below the message, such as an option. */
+  children?: ReactNode;
   onConfirm(): void;
   onClose(): void;
 }) {
@@ -104,6 +106,7 @@ export function ConfirmDialog(props: {
       }
     >
       <p>{props.message}</p>
+      {props.children}
     </Dialog>
   );
 }

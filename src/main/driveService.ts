@@ -18,6 +18,7 @@ import type { DriveConnector, SignedInAccount } from './connectors/types';
 export interface ProtonLoginConnector extends DriveConnector {
   login(username: string, password: string): Promise<ProtonLogin>;
   submitTwoFactor(pendingId: string, code: string): Promise<SignedInAccount>;
+  cancelLogin(pendingId: string): Promise<void>;
 }
 
 interface StateFile {
@@ -127,6 +128,11 @@ export class DriveService {
 
   async protonTwoFactor(pendingId: string, code: string): Promise<SignedIn> {
     return this.remember(await this.proton().submitTwoFactor(pendingId, code));
+  }
+
+  /** Abandons a Proton login waiting for its two-factor code. */
+  async protonCancel(pendingId: string) {
+    await this.proton().cancelLogin(pendingId);
   }
 
   private accountFor(accountId: string): { provider: DriveProvider } {

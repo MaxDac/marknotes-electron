@@ -92,6 +92,14 @@
   "build": {
     "appId": "io.github.maxdac.marknotes",
     "productName": "MarkNotes",
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "enableCookieEncryption": true
+    },
     "directories": {
       "output": "release",
       "buildResources": "build"
