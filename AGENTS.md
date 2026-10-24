@@ -46,9 +46,11 @@ names are required status checks in the `main` ruleset.
 
 - `src/main/`: Electron main process. `driveService.ts` exposes the remote drives over IPC; `connectors/` holds the
   Proton Drive (official SDK, SRP login), Dropbox (OAuth PKCE) and OneDrive (MSAL) connectors; `vault.ts` encrypts
-  tokens with `safeStorage`; `updater.ts` wraps electron-updater.
+  tokens with `safeStorage`; `localKey.ts` keeps the key that encrypts the local IndexedDB (keychain or app lock
+  passphrase); `updater.ts` wraps electron-updater.
 - `src/preload/`: the typed `window.api` bridge (`api.ts`); the renderer has no Node access.
-- `src/renderer/`: React UI (`ui/`), IndexedDB storage and the sync manager (`data/`).
+- `src/renderer/`: React UI (`ui/`), encrypted IndexedDB storage (`data/db.ts`, `data/crypto.ts`) and the sync
+  manager (`data/`).
 - `src/shared/`: platform-independent logic shared by main and renderer and mirrored by the other apps: front matter
   and note ids, note links, attachments, the note store and the sync engine. Most parity-relevant code lives here.
 - The sync algorithm (sync plan, three-way merge, newest-wins conflicts and conflicted copies, the manifest, the

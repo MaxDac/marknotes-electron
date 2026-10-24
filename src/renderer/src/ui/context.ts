@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
+import type { LockStatus } from '../../../preload/api';
 import type { NoteStore } from '../../../shared/noteStore';
 import type { Settings } from '../data/db';
 import type { SyncManager, SyncState } from '../data/syncManager';
@@ -10,6 +11,11 @@ export interface AppServices {
   settings: Settings;
   theme: { mode: ThemeMode; color: ThemeColor };
   setTheme(mode: ThemeMode, color: ThemeColor): void;
+  lock: LockStatus;
+  setLock(status: LockStatus): void;
+  /** Minutes without activity before the app locks (0: never); only used with the app lock. */
+  idleMinutes: number;
+  setIdleMinutes(minutes: number): void;
 }
 
 export const AppContext = createContext<AppServices | null>(null);
