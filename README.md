@@ -31,8 +31,8 @@ All MarkNotes apps share the same drive folder and note format. Settings → Abo
 - **Chord sequences** for guitar and bass (ported from ChordBuilder): **New chord sequence** creates a note with
   `type: chords` in its front-matter, marked 🎸 in the note list. It opens in a chord editor: build each chord on a
   fretboard (mute, open or a fret from 1 to 24 with fingers 1–4 per string; bass shows frets 9–24 with a red line at the
-  12th), add a name, tags and a note, then edit, duplicate, reorder or delete chords in the sequence. Chords with the
-  same name and instrument are numbered (`1 C`, `2 C`). The file stays readable markdown (see the spec's
+  right edge of the 12th fret), add a name, tags and a note, then edit, duplicate, reorder or delete chords in the
+  sequence. Chords with the same name and instrument are numbered (`1 C`, `2 C`). The file stays readable markdown (see the spec's
   "Chord sequences"); **View as text** opens it in the markdown editor, which is also used, with the error line, when
   the file cannot be parsed. Chord sequences are opt-in: turn on **Settings → Chord sequences** (off by default, stored
   on this device only) to show **New chord sequence**. While it is off, opening a chord sequence asks whether to turn
