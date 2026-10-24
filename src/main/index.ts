@@ -1,4 +1,13 @@
-import { app, BrowserWindow, ipcMain, safeStorage, session, shell, type IpcMainInvokeEvent } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  powerMonitor,
+  safeStorage,
+  session,
+  shell,
+  type IpcMainInvokeEvent,
+} from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import iconPath from '../../build/icon.png?asset';
@@ -9,6 +18,7 @@ import { createConnectors } from './connectors/registry';
 import type { DriveConnector } from './connectors/types';
 import { PRERELEASE_BUILD } from './config';
 import { DriveService } from './driveService';
+import { LocalKeyManager } from './localKey';
 import { isAppUrl, isTrustedSender } from './security';
 import { loadElectronUpdater, UpdateController } from './updater';
 import { createSecretVault, secureStorageStatus, type SecureStorageStatus } from './vault';
@@ -28,7 +38,11 @@ const openExternal = async (url: string) => {
   await shell.openExternal(url);
 };
 
-async function createService(): Promise<{ service: DriveService; storage: SecureStorageStatus }> {
+async function createService(): Promise<{
+  service: DriveService;
+  storage: SecureStorageStatus;
+  keys: LocalKeyManager;
+}> {
   const userData = app.getPath('userData');
   let connectors: Record<DriveProvider, DriveConnector>;
   let storage: SecureStorageStatus = 'secure';
@@ -43,7 +57,13 @@ async function createService(): Promise<{ service: DriveService; storage: Secure
     const vault = await createSecretVault(join(userData, 'credentials.bin'), safeStorage, storage);
     connectors = createConnectors({ vault, openExternal });
   }
-  return { service: new DriveService(join(userData, 'drives.json'), connectors), storage };
+  // Without a keychain that protects anything (and in e2e runs) the local key is stored as is: see the README.
+  const keys = new LocalKeyManager(join(userData, 'localkey.bin'), {
+    defaultProtection: !e2e && storage === 'secure' ? 'keychain' : 'none',
+    encryptor: safeStorage,
+  });
+  await keys.init();
+  return { service: new DriveService(join(userData, 'drives.json'), connectors), storage, keys };
 }
 
 function errorMessage(e: unknown): string {
@@ -87,9 +107,39 @@ function createUpdater(): UpdateController {
   );
 }
 
-function registerIpc(service: DriveService, storage: SecureStorageStatus, updater: UpdateController) {
+/**
+ * Locks the app (with the app lock enabled): the key is forgotten, then every window reloads to the lock screen.
+ * The page reloads itself once its pending edits are saved; it is reloaded anyway if it doesn't within 2 s.
+ */
+function lockApp(keys: LocalKeyManager): boolean {
+  if (!keys.lock()) return false;
+  for (const win of BrowserWindow.getAllWindows()) {
+    const contents = win.webContents;
+    const timer = setTimeout(() => !contents.isDestroyed() && contents.reload(), 2000);
+    contents.once('did-start-loading', () => clearTimeout(timer));
+    contents.send('lock:locked');
+  }
+  return true;
+}
+
+function registerIpc(
+  service: DriveService,
+  storage: SecureStorageStatus,
+  keys: LocalKeyManager,
+  updater: UpdateController,
+) {
   handle('app:deviceId', () => service.deviceId());
   handle('app:secureStorage', () => storage);
+  handle('lock:status', () => keys.status());
+  handle('lock:key', () => keys.key());
+  handle('lock:unlock', (passphrase: string) => keys.unlock(passphrase));
+  handle('lock:enable', (passphrase: string) => keys.enable(passphrase));
+  handle('lock:disable', (passphrase: string) => keys.disable(passphrase));
+  handle('lock:change', (oldPassphrase: string, newPassphrase: string) =>
+    keys.change(oldPassphrase, newPassphrase),
+  );
+  handle('lock:lockNow', () => lockApp(keys));
+  handle('lock:reset', () => keys.reset());
   handle('app:openExternal', (url: string) => openExternal(url));
   handle('drives:providers', () => service.providers());
   handle('drives:list', () => service.drives());
@@ -178,8 +228,10 @@ if (!e2e && !app.requestSingleInstanceLock()) {
   void app.whenReady().then(async () => {
     denyPermissions();
     const updater = createUpdater();
-    const { service, storage } = await createService();
-    registerIpc(service, storage, updater);
+    const { service, storage, keys } = await createService();
+    registerIpc(service, storage, keys, updater);
+    powerMonitor.on('suspend', () => lockApp(keys));
+    powerMonitor.on('lock-screen', () => lockApp(keys));
     createWindow();
     void updater.start();
     app.on('activate', () => {

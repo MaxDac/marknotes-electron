@@ -57,10 +57,21 @@ Out of scope: search, tags, background sync, local encryption.
 - **Linux without a keyring**: Chromium falls back to a hardcoded key (`basic_text`), which does not protect anything.
   In that case credentials are only kept in memory (you sign in again after each launch), any older
   `credentials.bin` is deleted, and Settings and Add drive show a warning.
-- **Notes on this device** are stored in the app's IndexedDB in the profile folder, readable by anything running as
-  your user. **Settings → Delete all local data** disconnects every drive and deletes the local notes, images and sync
-  state (nothing is deleted from the drives). When disconnecting the last drive you can also delete the local notes.
-  Deleted IndexedDB data may stay on disk until the database compacts it.
+- **Notes on this device** are stored in the app's IndexedDB in the profile folder, encrypted: every note, image,
+  sync record, base copy and setting is encrypted with AES-256-GCM, and paths and drive ids are replaced by keyed
+  hashes (HMAC-SHA-256). The data key is a random key in `localkey.bin`, protected by the OS keychain (`safeStorage`).
+  The unencrypted database of earlier versions is migrated and deleted on first start. **Linux without a keyring**
+  (see above): nothing can protect the key, so it is stored as is and Settings recommends the app lock.
+- **App lock** (Settings → Privacy): the data key is wrapped with a key derived from a passphrase (scrypt), so the
+  notes can't be read without it. MarkNotes then asks for the passphrase on start, after an idle time (off, 5, 15 or
+  60 minutes), when the computer sleeps and when the screen locks; locking forgets the key and reloads the window.
+  Wrong passphrases get a generic error after a delay. **There is no recovery**: if you forget the passphrase, delete
+  the local data from the lock screen and connect a drive again to download the notes (notes never synced are lost).
+- **Settings → Delete all local data** disconnects every drive, deletes the local notes, images and sync state
+  (nothing is deleted from the drives) and replaces the data key. When disconnecting the last drive you can also
+  delete the local notes. Deleted IndexedDB data and the old unencrypted database may stay in the LevelDB files on
+  disk until they are compacted; they are not securely erased, but encrypted records can no longer be decrypted once
+  the key is replaced.
 - **Remote images** in notes are not loaded: a note could otherwise reveal when and where it is read. Only `https:`
   images can be loaded, per note and for the current session, with **Load remote images**; other sources (`http:`,
   `//host`, `file:`, network paths) are never loaded.

@@ -71,6 +71,11 @@ export class SyncManager {
     if (conflictsChanged) void this.settings.set(CONFLICTS_KEY, this.state.conflicts).catch(() => undefined);
   }
 
+  /** Saves pending editor changes (before a sync, or before the app locks). */
+  async flushPending() {
+    await Promise.all([...this.flushers].map((flush) => flush().catch(() => undefined)));
+  }
+
   /** Registers a pending-save flush (e.g. an open editor) awaited before every sync; returns an unregister. */
   onBeforeSync(flush: () => Promise<void>): () => void {
     this.flushers.add(flush);
@@ -220,7 +225,7 @@ export class SyncManager {
     this.update({ running: true, message: 'Syncing…' });
     try {
       // Pending editor saves land before the local tree is listed.
-      await Promise.all([...this.flushers].map((flush) => flush().catch(() => undefined)));
+      await this.flushPending();
       const messages = new Map<string, string>();
       const targets: DriveSyncTarget[] = [];
       for (const account of drives) {

@@ -4,6 +4,7 @@ import { PROVIDER_NAMES, syncFolder } from '../../../shared/types';
 import logo from '../../../../branding/marknotes-mark.svg';
 import type { Page } from '../App';
 import type { DriveStatus } from '../data/syncManager';
+import { AppLockSettings } from './AppLockSettings';
 import { ConfirmDialog } from './Dialog';
 import { errorMessage, useApp, useSyncState } from './context';
 import { StorageWarning } from './StorageWarning';
@@ -135,6 +136,7 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
             Notes are stored on this device so that you can read and edit them offline. Images from the web
             are only loaded when you ask for them in a note.
           </p>
+          <AppLockSettings />
           <div className="row">
             <button className="outlined danger" onClick={() => setConfirmWipe(true)}>
               Delete all local data

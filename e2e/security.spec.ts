@@ -64,3 +64,41 @@ test('delete all local data removes the notes on this device', async () => {
     rmSync(userData, { recursive: true, force: true });
   }
 });
+
+test('the app lock asks for the passphrase after locking and on restart', async () => {
+  const userData = mkdtempSync(join(tmpdir(), 'marknotes-e2e-'));
+  let { app, page } = await launch(userData);
+  try {
+    await createNote(page, 'Locked', 'hidden text');
+    await page.waitForTimeout(800);
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await page.getByRole('button', { name: 'Turn on app lock' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('New passphrase', { exact: true }).fill('correct horse');
+    await dialog.getByLabel('Repeat the new passphrase').fill('correct horse');
+    await dialog.getByRole('button', { name: 'Turn on' }).click();
+    await page.getByRole('button', { name: 'Lock now' }).click();
+
+    const locked = page.getByRole('heading', { name: 'MarkNotes is locked' });
+    await expect(locked).toBeVisible();
+    await page.getByLabel('Passphrase').fill('wrong passphrase');
+    await page.getByRole('button', { name: 'Unlock' }).click();
+    await expect(page.getByRole('alert')).toHaveText('Wrong passphrase');
+    await page.getByLabel('Passphrase').fill('correct horse');
+    await page.getByRole('button', { name: 'Unlock' }).click();
+    await expect(page.getByRole('heading', { name: 'MarkNotes', exact: true })).toBeVisible();
+    await expect(page.getByTestId('entry').filter({ hasText: 'Locked' })).toBeVisible();
+
+    await app.close();
+    ({ app, page } = await launch(userData));
+    await expect(page.getByRole('heading', { name: 'MarkNotes is locked' })).toBeVisible();
+    // Forgotten passphrase: the local data is deleted and the app lock removed.
+    await page.getByRole('button', { name: 'Delete all local data' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click();
+    await expect(page.getByRole('heading', { name: 'MarkNotes', exact: true })).toBeVisible();
+    await expect(page.getByText('No notes here yet')).toBeVisible();
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
