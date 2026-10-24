@@ -255,6 +255,67 @@ test('empty states offer to create a note or a chord sequence', async () => {
   }
 });
 
+test('bass fret 12 marker is rendered after the fret without changing guitar or other frets', async () => {
+  const userData = newUserData();
+  const { app, page } = await launch(userData);
+  try {
+    await setChordSequences(page, true);
+    await page.getByTestId('new-chords').click();
+    await page.getByRole('textbox', { name: 'Name' }).fill('Fret markers');
+    await page.getByRole('button', { name: 'Create' }).click();
+    const fretboard = page.getByTestId('fretboard');
+    await expect(fretboard).toBeVisible();
+
+    const borders = () =>
+      fretboard.locator('.string-row button.fret').evaluateAll((cells) =>
+        cells.map((cell) => {
+          const style = getComputedStyle(cell);
+          return {
+            label: cell.getAttribute('aria-label'),
+            left: style.borderLeftWidth,
+            right: style.borderRightWidth,
+            rightStyle: style.borderRightStyle,
+            rightColour: style.borderRightColor,
+          };
+        }),
+      );
+    const guitarBorders = await borders();
+    expect(guitarBorders).toHaveLength(6 * 24);
+    for (const border of guitarBorders) {
+      expect(border).toMatchObject({ left: '0px', right: '1px', rightStyle: 'solid' });
+    }
+    await expect(fretboard.locator('.red-line-fret')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Bass', exact: true }).click();
+    const header = fretboard.locator('.fret-header .red-line-fret');
+    await expect(header).toHaveText('12');
+    const red = await header.evaluate((cell) => getComputedStyle(cell).color);
+    const bassBorders = await borders();
+    expect(bassBorders).toHaveLength(4 * 16);
+    expect(bassBorders.filter((border) => border.label?.endsWith(' fret 12'))).toHaveLength(4);
+    for (const border of bassBorders) {
+      if (border.label?.endsWith(' fret 12')) {
+        expect(border).toMatchObject({
+          left: '0px',
+          right: '3px',
+          rightStyle: 'solid',
+          rightColour: red,
+        });
+      } else {
+        expect(border).toMatchObject({ left: '0px', right: '1px', rightStyle: 'solid' });
+        expect(border.rightColour).not.toBe(red);
+      }
+    }
+
+    await page.getByRole('button', { name: 'Guitar', exact: true }).click();
+    await expect(fretboard.locator('.red-line-fret')).toHaveCount(0);
+    expect(await borders()).toEqual(guitarBorders);
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
+
 test('chord sequences open in the chord editor and fall back to text on parse errors', async () => {
   const userData = newUserData();
   let { app, page } = await launch(userData);

@@ -806,7 +806,7 @@ textarea.merged {
   background: color-mix(in srgb, var(--primary) 12%, transparent);
 }
 .string-row button.red-line-fret {
-  border-left: 3px solid var(--red-line);
+  border-right: 3px solid var(--red-line);
 }
 .string-row button::after {
   position: absolute;
