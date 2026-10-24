@@ -133,10 +133,82 @@ test('notes, folders, editor and preview persist across restarts', async () => {
   await app.close();
 });
 
+async function setChordSequences(page: Page, enabled: boolean) {
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const toggle = page.getByRole('switch', { name: 'Chord sequences' });
+  await toggle.setChecked(enabled);
+  await page.getByRole('button', { name: 'Back' }).click();
+}
+
+test('chord sequence creation is hidden until enabled in the settings', async () => {
+  const userData = newUserData();
+  let { app, page } = await launch(userData);
+  try {
+    await expect(page.getByTestId('empty-new-note')).toBeVisible();
+    await expect(page.getByTestId('new-chords')).toHaveCount(0);
+    await expect(page.getByTestId('empty-new-chords')).toHaveCount(0);
+    await expect(page.getByTestId('pane-new-chords')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await expect(page.getByRole('switch', { name: 'Chord sequences' })).not.toBeChecked();
+    await page.getByRole('switch', { name: 'Chord sequences' }).check();
+    await page.getByRole('button', { name: 'Back' }).click();
+    await expect(page.getByTestId('new-chords')).toBeVisible();
+    await expect(page.getByTestId('empty-new-chords')).toBeVisible();
+
+    await app.close();
+    ({ app, page } = await launch(userData));
+    await expect(page.getByTestId('new-chords')).toBeVisible();
+    await setChordSequences(page, false);
+    await expect(page.getByTestId('new-chords')).toHaveCount(0);
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
+
+test('opening a chord sequence while the setting is off asks to enable it', async () => {
+  const userData = newUserData();
+  const { app, page } = await launch(userData);
+  try {
+    await createNote(page, 'Plain');
+    await setChordSequences(page, true);
+    await page.getByTestId('new-chords').click();
+    await page.getByRole('textbox', { name: 'Name' }).fill('Songs');
+    await page.getByRole('button', { name: 'Create' }).click();
+    await expect(page.getByTestId('chord-editor')).toBeVisible();
+    await setChordSequences(page, false);
+    await page.getByTestId('entry').filter({ hasText: 'Plain' }).click();
+    await expect(page.getByTestId('note-title')).toHaveText('Plain');
+
+    // Cancel: the note is not opened and the app stays where it was.
+    const songs = page.getByTestId('entry').filter({ hasText: 'Songs' });
+    await songs.click();
+    const prompt = page.getByRole('dialog', { name: 'Enable chord sequences?' });
+    await expect(prompt).toContainText('Songs');
+    await prompt.getByRole('button', { name: 'Cancel' }).click();
+    await expect(prompt).toBeHidden();
+    await expect(page.getByTestId('note-title')).toHaveText('Plain');
+    await expect(page.getByTestId('new-chords')).toHaveCount(0);
+
+    // Enable: the setting turns on and the note opens in the chord editor.
+    await songs.click();
+    await prompt.getByRole('button', { name: 'Enable' }).click();
+    await expect(page.getByTestId('chord-editor')).toBeVisible();
+    await expect(page.getByTestId('new-chords')).toBeVisible();
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await expect(page.getByRole('switch', { name: 'Chord sequences' })).toBeChecked();
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
+
 test('empty states offer to create a note or a chord sequence', async () => {
   const userData = newUserData();
   const { app, page } = await launch(userData);
   try {
+    await setChordSequences(page, true);
     await expect(page.getByText('No notes here yet')).toBeVisible();
     await expect(page.getByTestId('empty-new-note')).toBeVisible();
     await expect(page.getByTestId('pane-new-note')).toBeVisible();
@@ -158,6 +230,7 @@ test('chord sequences open in the chord editor and fall back to text on parse er
   const userData = newUserData();
   let { app, page } = await launch(userData);
 
+  await setChordSequences(page, true);
   await page.getByTestId('new-chords').click();
   await page.getByRole('textbox', { name: 'Name' }).fill('Songs');
   await page.getByRole('button', { name: 'Create' }).click();

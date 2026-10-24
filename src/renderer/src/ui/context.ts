@@ -11,6 +11,9 @@ export interface AppServices {
   settings: Settings;
   theme: { mode: ThemeMode; color: ThemeColor };
   setTheme(mode: ThemeMode, color: ThemeColor): void;
+  /** The "Chord sequences" setting: creating chord sequences is offered only when it is on. */
+  chordSequences: boolean;
+  setChordSequences(enabled: boolean): void;
   lock: LockStatus;
   setLock(status: LockStatus): void;
   /** Minutes without activity before the app locks (0: never); only used with the app lock. */

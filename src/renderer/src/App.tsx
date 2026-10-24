@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { LockStatus } from '../../preload/api';
 import { NoteStore } from '../../shared/noteStore';
 import { api, unwrap } from './data/api';
+import { loadChordSequencesEnabled, saveChordSequencesEnabled } from './data/chordSequences';
 import { IdbNodeBackend, openDatabase, Settings } from './data/db';
 import { SyncManager } from './data/syncManager';
 import { AddDrive } from './ui/AddDrive';
@@ -21,6 +22,7 @@ interface Loaded {
   settings: Settings;
   mode: ThemeMode;
   color: ThemeColor;
+  chordSequences: boolean;
   idleMinutes: number;
 }
 
@@ -39,6 +41,7 @@ async function load(): Promise<Loaded> {
     settings,
     mode: await settings.get<ThemeMode>('themeMode', 'system'),
     color: await settings.get<ThemeColor>('themeColor', 'blue'),
+    chordSequences: await loadChordSequencesEnabled(settings),
     idleMinutes: await settings.get<number>('lockIdleMinutes', DEFAULT_IDLE_MINUTES),
   };
 }
@@ -57,6 +60,7 @@ export function App() {
   });
   const [systemDark, setSystemDark] = useState(darkQuery.matches);
   const [page, setPage] = useState<Page>('notes');
+  const [chordSequences, setChordSequencesState] = useState(false);
   const [lock, setLock] = useState<LockStatus | null>(null);
   const [idleMinutes, setIdleMinutesState] = useState(DEFAULT_IDLE_MINUTES);
   const unlocked = lock?.state === 'unlocked';
@@ -73,6 +77,7 @@ export function App() {
         if (cancelled) return;
         setLoaded(l);
         setThemeState({ mode: l.mode, color: l.color });
+        setChordSequencesState(l.chordSequences);
         setIdleMinutesState(l.idleMinutes);
         l.sync.syncIfConnected();
       },
@@ -127,6 +132,11 @@ export function App() {
           void loaded.settings.set('themeMode', mode);
           void loaded.settings.set('themeColor', color);
         },
+        chordSequences,
+        setChordSequences(enabled) {
+          setChordSequencesState(enabled);
+          void saveChordSequencesEnabled(loaded.settings, enabled);
+        },
         lock,
         setLock,
         idleMinutes,
@@ -135,7 +145,7 @@ export function App() {
           void loaded.settings.set('lockIdleMinutes', minutes);
         },
       },
-    [loaded, theme, lock, idleMinutes],
+    [loaded, theme, lock, idleMinutes, chordSequences],
   );
 
   if (error) return <div className="empty error">Could not open the notes: {error}</div>;
