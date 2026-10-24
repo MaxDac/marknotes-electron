@@ -43,6 +43,9 @@ class ScopedStore implements RemoteDriveStore {
   delete(entry: RemoteEntry) {
     return this.drive.delete({ ...entry, path: this.abs(entry.path) });
   }
+  rename(entry: RemoteEntry, toPath: string) {
+    return this.drive.rename({ ...entry, path: this.abs(entry.path) }, this.abs(toPath));
+  }
   async readManifest() {
     const e = this.drive.nodes.get(this.abs('.marknotes/manifest.json'));
     return e ? e.bytes : null;
@@ -94,7 +97,7 @@ export class FakeConnector implements DriveConnector {
   async store(account: DriveAccount): Promise<RemoteDriveStore> {
     const d = this.drive(account.id);
     const prefix = syncFolder(account);
-    if (prefix) await d.createFolder(prefix);
+    if (prefix && !d.exists(prefix)) await d.createFolder(prefix);
     return new ScopedStore(d, prefix);
   }
 

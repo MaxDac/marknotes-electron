@@ -193,6 +193,8 @@ const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
  * ones only fetch the changes since the saved cursor.
  */
 export class DropboxDriveStore implements RemoteDriveStore {
+  readonly supportsCaseOnlyRename = false;
+  readonly timestampResolutionMillis = 1000;
   private readonly root: string;
   private readonly rootLower: string;
   private cursor: string | null = null;
@@ -330,7 +332,8 @@ export class DropboxDriveStore implements RemoteDriveStore {
         path: this.absolute(path),
         mode,
         autorename: false,
-        ...(modifiedMillis ? { client_modified: dropboxTime(modifiedMillis) } : {}),
+        ...(mode === 'add' ? { strict_conflict: true } : {}),
+        ...(modifiedMillis !== undefined ? { client_modified: dropboxTime(modifiedMillis) } : {}),
       },
       bytes,
     );
@@ -338,22 +341,16 @@ export class DropboxDriveStore implements RemoteDriveStore {
   }
 
   async createFolder(path: string): Promise<RemoteEntry> {
-    let metadata: Metadata;
-    try {
-      const result = await this.client.rpc<{ metadata: Metadata }>('files/create_folder_v2', {
-        path: this.absolute(path),
-        autorename: false,
-      });
-      metadata = result.metadata;
-    } catch (e) {
-      if (!(e instanceof DropboxError && e.is('path', 'conflict'))) throw e;
-      metadata = await this.client.rpc<Metadata>('files/get_metadata', { path: this.absolute(path) });
-    }
-    return this.remember(metadata, 'folder');
+    const result = await this.client.rpc<{ metadata: Metadata }>('files/create_folder_v2', {
+      path: this.absolute(path),
+      autorename: false,
+    });
+    return this.remember(result.metadata, 'folder');
   }
 
   /** Files are deleted by id and only at the planned revision (`parent_rev`). */
   async delete(entry: RemoteEntry): Promise<void> {
+    if (entry.isFolder) throw new Error('Dropbox does not support atomic empty-only folder deletion');
     const conditional = !entry.isFolder && entry.version !== '';
     const path = this.absolute(entry.path);
     try {
@@ -383,6 +380,12 @@ export class DropboxDriveStore implements RemoteDriveStore {
       if (!(e instanceof DropboxError && e.is('path', 'not_found'))) throw e;
       return null;
     }
+  }
+
+  async rename(_entry: RemoteEntry, _toPath: string): Promise<void> {
+    throw new Error(
+      'Dropbox case-only moves require a recoverable intermediate rename and are not supported',
+    );
   }
 
   async writeManifest(bytes: Uint8Array): Promise<void> {

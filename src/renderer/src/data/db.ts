@@ -1,6 +1,12 @@
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { NodeBackend, StoredNode } from '../../../shared/noteStore';
-import type { BaseContentStore, SyncMetadataStore, SyncRecord } from '../../../shared/types';
+import { sameNodes, type NodeBackend, type StoredNode } from '../../../shared/noteStore';
+import type {
+  BaseContentStore,
+  PendingConflictCopy,
+  PendingRename,
+  SyncMetadataStore,
+  SyncRecord,
+} from '../../../shared/types';
 import { deriveDbKeys, open, seal, tag, type DbKeys } from './crypto';
 
 /** Every record: `k` is a keyed tag of the logical key, `d` of the drive id; the value is AES-GCM encrypted. */
@@ -11,14 +17,16 @@ interface EncryptedRecord {
   ct: Uint8Array;
 }
 
-type StoreName = 'nodes' | 'syncRecords' | 'baseContent' | 'settings';
-type DriveStoreName = 'syncRecords' | 'baseContent';
+type StoreName = 'nodes' | 'syncRecords' | 'baseContent' | 'settings' | 'conflictIntents' | 'renameIntents';
+type DriveStoreName = 'syncRecords' | 'baseContent' | 'conflictIntents' | 'renameIntents';
 
 interface EncryptedDbSchema extends DBSchema {
   nodes: { key: string; value: EncryptedRecord };
   syncRecords: { key: string; value: EncryptedRecord; indexes: { driveId: string } };
   baseContent: { key: string; value: EncryptedRecord; indexes: { driveId: string } };
   settings: { key: string; value: EncryptedRecord };
+  conflictIntents: { key: string; value: EncryptedRecord; indexes: { driveId: string } };
+  renameIntents: { key: string; value: EncryptedRecord; indexes: { driveId: string } };
 }
 
 /** The unencrypted database of earlier versions, migrated on first start. */
@@ -33,7 +41,14 @@ export const DB_NAME = 'marknotes-enc';
 export const LEGACY_DB_NAME = 'marknotes';
 const MIGRATED_KEY = 'legacyMigrated';
 
-const STORES: StoreName[] = ['nodes', 'syncRecords', 'baseContent', 'settings'];
+const STORES: StoreName[] = [
+  'nodes',
+  'syncRecords',
+  'baseContent',
+  'settings',
+  'conflictIntents',
+  'renameIntents',
+];
 const driveKey = (driveId: string, path: string) => JSON.stringify([driveId, path]);
 const aad = (store: StoreName, k: string) => `${store}\u0000${k}`;
 
@@ -99,6 +114,34 @@ export class Db {
     return this.apply(store, [{ key, value, driveId }]);
   }
 
+  async applyNodesIfUnchanged(expected: StoredNode[], puts: StoredNode[], deletes: string[]) {
+    const before = await this.idb.getAll('nodes');
+    const decoded = await Promise.all(before.map((r) => this.openRecord<StoredNode>('nodes', r)));
+    if (!sameNodes(expected, decoded)) throw new Error('Local tree changed during sync');
+    const records = await Promise.all(puts.map((n) => this.sealRecord('nodes', { key: n.path, value: n })));
+    const keys = await Promise.all(deletes.map((p) => this.tagOf('nodes', p)));
+    const tx = this.idb.transaction('nodes', 'readwrite');
+    const current = await tx.store.getAll();
+    const unchanged =
+      current.length === before.length &&
+      current.every(
+        (r, i) =>
+          r.k === before[i].k &&
+          r.iv.length === before[i].iv.length &&
+          r.ct.length === before[i].ct.length &&
+          r.iv.every((b, j) => b === before[i].iv[j]) &&
+          r.ct.every((b, j) => b === before[i].ct[j]),
+      );
+    if (!unchanged) {
+      tx.abort();
+      await tx.done.catch(() => undefined);
+      throw new Error('Local tree changed during sync');
+    }
+    for (const key of keys) void tx.store.delete(key);
+    for (const record of records) void tx.store.put(record);
+    await tx.done;
+  }
+
   delete(store: StoreName, key: string) {
     return this.apply(store, [], [key]);
   }
@@ -143,12 +186,18 @@ export interface OpenOptions {
 }
 
 export async function openDatabase(options: OpenOptions): Promise<Db> {
-  const idb = await openDB<EncryptedDbSchema>(options.name ?? DB_NAME, 1, {
+  const idb = await openDB<EncryptedDbSchema>(options.name ?? DB_NAME, 2, {
     upgrade(db) {
-      db.createObjectStore('nodes', { keyPath: 'k' });
-      db.createObjectStore('syncRecords', { keyPath: 'k' }).createIndex('driveId', 'd');
-      db.createObjectStore('baseContent', { keyPath: 'k' }).createIndex('driveId', 'd');
-      db.createObjectStore('settings', { keyPath: 'k' });
+      if (!db.objectStoreNames.contains('nodes')) db.createObjectStore('nodes', { keyPath: 'k' });
+      if (!db.objectStoreNames.contains('syncRecords'))
+        db.createObjectStore('syncRecords', { keyPath: 'k' }).createIndex('driveId', 'd');
+      if (!db.objectStoreNames.contains('baseContent'))
+        db.createObjectStore('baseContent', { keyPath: 'k' }).createIndex('driveId', 'd');
+      if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'k' });
+      if (!db.objectStoreNames.contains('conflictIntents'))
+        db.createObjectStore('conflictIntents', { keyPath: 'k' }).createIndex('driveId', 'd');
+      if (!db.objectStoreNames.contains('renameIntents'))
+        db.createObjectStore('renameIntents', { keyPath: 'k' }).createIndex('driveId', 'd');
     },
   });
   const db = new Db(idb, await deriveDbKeys(options.key), options.rotateKey);
@@ -228,6 +277,9 @@ export class IdbNodeBackend implements NodeBackend {
       deletes,
     );
   }
+  applyIfUnchanged(expected: StoredNode[], puts: StoredNode[], deletes: string[]) {
+    return this.db.applyNodesIfUnchanged(expected, puts, deletes);
+  }
 }
 
 const below = (path: string, candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
@@ -248,6 +300,31 @@ export class IdbSyncMetadataStore implements SyncMetadataStore {
   }
   async clear() {
     await this.db.clearDrive('syncRecords', this.driveId);
+    await this.db.clearDrive('conflictIntents', this.driveId);
+    await this.db.clearDrive('renameIntents', this.driveId);
+  }
+  pendingConflicts(): Promise<PendingConflictCopy[]> {
+    return this.db.getAllForDrive('conflictIntents', this.driveId);
+  }
+  async putConflict(conflict: PendingConflictCopy) {
+    await this.db.put(
+      'conflictIntents',
+      driveKey(this.driveId, conflict.intent.path),
+      conflict,
+      this.driveId,
+    );
+  }
+  async deleteConflict(path: string) {
+    await this.db.delete('conflictIntents', driveKey(this.driveId, path));
+  }
+  pendingRenames(): Promise<PendingRename[]> {
+    return this.db.getAllForDrive('renameIntents', this.driveId);
+  }
+  async putRename(rename: PendingRename) {
+    await this.db.put('renameIntents', driveKey(this.driveId, rename.path), rename, this.driveId);
+  }
+  async deleteRename(path: string) {
+    await this.db.delete('renameIntents', driveKey(this.driveId, path));
   }
 }
 

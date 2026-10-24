@@ -139,6 +139,7 @@ class FakeDrive implements DriveClient {
   }
 
   async createFolder(parent: NodeOrUid, name: string) {
+    this.requireAbsent(uidOf(parent), name);
     const node = this.add(uidOf(parent), name, 'folder');
     this.emit('node_created', node);
     return this.entity(node);
@@ -192,7 +193,15 @@ class FakeDrive implements DriveClient {
   }
 
   async getFileUploader(parent: NodeOrUid, name: string, metadata: UploadMetadata) {
-    return this.uploader(() => this.add(uidOf(parent), name, 'file'), metadata);
+    return this.uploader(() => {
+      this.requireAbsent(uidOf(parent), name);
+      return this.add(uidOf(parent), name, 'file');
+    }, metadata);
+  }
+
+  private requireAbsent(parentUid: string, name: string) {
+    if ([...this.nodes.values()].some((n) => n.parentUid === parentUid && n.name === name && !n.trashed))
+      throw new Error(`${name} already exists`);
   }
 
   async getFileRevisionUploader(uid: NodeOrUid, metadata: UploadMetadata) {
@@ -297,9 +306,23 @@ describe('ProtonDriveStore', () => {
     expect(folder.isFolder).toBe(true);
     expect(paths(await store.snapshot())).toEqual(['dir', 'dir/note.md', 'empty']);
 
-    await store.delete((await store.snapshot()).find((e) => e.path === 'dir')!);
-    expect(paths(await store.snapshot())).toEqual(['empty']);
-    await expect(store.delete({ ...folder, id: 'missing' })).rejects.toThrow(/Could not trash/);
+    await expect(store.delete((await store.snapshot()).find((e) => e.path === 'dir')!)).rejects.toThrow(
+      /atomic empty-only/,
+    );
+    expect(paths(await store.snapshot())).toEqual(['dir', 'dir/note.md', 'empty']);
+    await expect(store.delete({ ...revised, id: 'missing', version: '' })).rejects.toThrow(/Could not trash/);
+  });
+
+  it('never adopts occupied new file or folder targets', async () => {
+    const drive = new FakeDrive();
+    const store = new ProtonDriveStore(drive, 'MarkNotes');
+    await store.snapshot();
+    await store.uploadNew('note.md', enc('original'));
+    await expect(store.uploadNew('note.md', enc('replacement'))).rejects.toThrow(/already exists/);
+    expect(dec(drive.find('MarkNotes/note.md')!.content)).toBe('original');
+    await store.createFolder('folder');
+    await expect(store.createFolder('folder')).rejects.toThrow(/already exists/);
+    await expect(store.createFolder('note.md')).rejects.toThrow(/already exists/);
   });
 
   it('only re-lists the tree when events touch the synced folder', async () => {

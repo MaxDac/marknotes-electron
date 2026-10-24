@@ -39,6 +39,14 @@ and the same sync format, so all MarkNotes apps can share one drive folder.
   The sync algorithm (plan, merge, conflicts, manifest, multi-drive order) comes from the shared Rust core
   [marknotes-sync](https://github.com/MaxDac/marknotes-sync) (`@marknotes/sync`, WebAssembly), used by every MarkNotes
   app; this app only does the file and drive I/O.
+  New notes, conflicted copies and folders use create-only writes: a concurrent creation is never overwritten or
+  adopted. Conflicted copies keep the losing edit's modification time and have a durable, encrypted retry intent,
+  so restarting an interrupted sync reuses the verified copy and its generated note id.
+  Folder deletion removes known files conditionally and folders only when atomically empty. The current cloud
+  adapters cannot guarantee atomic empty-only folder removal, so they report a step error and retain the folder
+  and its sync state instead of risking unseen notes. Record-backed case-only renames converge locally when the
+  stale content is unchanged. OneDrive supports conditional, no-clobber remote case-only moves; Dropbox and Proton
+  report an unsupported-step error without changing the drive.
 - **Proton login**: SRP password login with TOTP. CAPTCHA/human verification, two-password mode and FIDO2-only
   accounts are not supported.
 - **Dropbox / OneDrive login**: OAuth 2 PKCE (Dropbox) and MSAL (OneDrive) in the system browser, with a loopback redirect.
@@ -86,10 +94,15 @@ Out of scope: search, tags, background sync, local encryption.
 
 ## Development
 
-Requirements: Node.js (version in `.node-version`) and Git (used to apply the pinned build-dependency patch).
+Requirements: Node.js (version in `.node-version`), Git (used to apply the pinned build-dependency patch), Rust
+1.99.1 with the `wasm32-unknown-unknown` target, a C/C++ linker for Rust host build scripts, and wasm-bindgen CLI
+0.2.129. The source-pinned shared sync dependency
+builds WebAssembly during `npm ci`; no unpublished release artifact is required.
 Clone with `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone, to fetch `spec/`.
 
 ```sh
+rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
+cargo +1.99.1 install wasm-bindgen-cli --version 0.2.129 --locked
 npm ci
 npm run deps:check     # no deprecated packages anywhere in the lockfile
 npm run deps:audit     # zero known vulnerabilities, including dev/optional/peer dependencies
@@ -129,9 +142,13 @@ advisories at check time**, not a guarantee against undiscovered vulnerabilities
 The deprecation check reads lockfile metadata; recheck registry metadata when updating dependencies, because a package
 can be deprecated after the lockfile was generated.
 
-Every package resolves from `https://registry.npmjs.org/` except the shared sync core `@marknotes/sync`, installed from a
-[marknotes-sync release](https://github.com/MaxDac/marknotes-sync/releases) tarball (pinned by URL and lockfile
-integrity). Update it with `npm install --package-lock-only --ignore-scripts <release .tgz URL>`.
+Every package resolves from `https://registry.npmjs.org/` except the shared sync core `@marknotes/sync`, built from an
+immutable [marknotes-sync](https://github.com/MaxDac/marknotes-sync) source commit by its `prepare` script. Its exact
+Git commit is pinned in `package.json` and the lockfile; the core pins Rust and Cargo dependencies. Keep both Git
+URLs on HTTPS, not SSH, so fresh installs need no SSH credentials. Updating the dependency also
+requires keeping `.github/actions/setup-sync-core/action.yml` and the prerequisites above aligned with the core's
+`rust-toolchain.toml` and wasm-bindgen version. Regenerate only the lockfile with
+`npm install --package-lock-only --ignore-scripts`, then verify a fresh `npm ci` with the required toolchains.
 
 Stable electron-builder 26.18.0 and electron-updater 6.8.11 still need these version-pinned compatibility fixes:
 

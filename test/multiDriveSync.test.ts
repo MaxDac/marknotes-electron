@@ -135,6 +135,7 @@ describe('MultiDriveSync', () => {
       uploadRevision: (e, b) => driveA.uploadRevision(e, b),
       createFolder: (p) => driveA.createFolder(p),
       delete: (e) => driveA.delete(e),
+      rename: (e, to) => driveA.rename(e, to),
       readManifest: () => driveA.readManifest(),
       writeManifest: (b) => driveA.writeManifest(b),
     };

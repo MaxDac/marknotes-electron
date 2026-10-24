@@ -237,6 +237,7 @@ describe('DropboxDriveStore', () => {
       path: '/Documents/MarkNotes/Work/Città.md',
       mode: 'add',
       autorename: false,
+      strict_conflict: true,
     });
     // The argument header must be ASCII.
     expect(upload.headers['dropbox-api-arg']).toContain('Citt\\u00e0.md');
@@ -265,7 +266,7 @@ describe('DropboxDriveStore', () => {
     expect(api.calls('files/download')[0].arg).toEqual({ path: 'id:/Documents/MarkNotes/Todo.md' });
   });
 
-  it('creates folders and returns the existing one on conflict', async () => {
+  it('creates folders without adopting an occupied target', async () => {
     api.on('files/create_folder_v2', (req) =>
       json({ metadata: untagged(folder((req.arg as { path: string }).path, 'id:new')) }),
     );
@@ -276,16 +277,25 @@ describe('DropboxDriveStore', () => {
       routeError({ '.tag': 'path', path: { '.tag': 'conflict', conflict: { '.tag': 'folder' } } }),
     );
     api.on('files/get_metadata', () => json(folder('/Documents/MarkNotes/Work', 'id:work')));
-    const existing = await store.createFolder('Work');
-    expect(existing.id).toBe('id:work');
-    expect(existing.isFolder).toBe(true);
+    await expect(store.createFolder('Work')).rejects.toThrow(/Dropbox error 409/);
+    expect(api.calls('files/get_metadata')).toHaveLength(0);
   });
 
-  it('deletes entries and ignores entries already gone', async () => {
+  it('refuses recursive folder deletion and retains the cached subtree', async () => {
+    const entries = new Map((await store.snapshot()).map((e) => [e.path, e]));
+    await expect(store.delete(entries.get('Work')!)).rejects.toThrow(/atomic empty-only/);
+    expect(api.calls('files/delete_v2')).toHaveLength(0);
+    expect((await store.snapshot()).map((e) => e.path).sort()).toEqual(['Todo.md', 'Work', 'Work/Plan.md']);
+  });
+
+  it('deletes files and ignores entries already gone', async () => {
     const entries = new Map((await store.snapshot()).map((e) => [e.path, e]));
     api.on('files/delete_v2', (req) => json({ metadata: { path: (req.arg as { path: string }).path } }));
-    await store.delete(entries.get('Work')!);
-    expect(api.calls('files/delete_v2')[0].arg).toEqual({ path: '/Documents/MarkNotes/Work' });
+    await store.delete(entries.get('Work/Plan.md')!);
+    expect(api.calls('files/delete_v2')[0].arg).toEqual({
+      path: '/Documents/MarkNotes/Work/Plan.md',
+      parent_rev: 'r2',
+    });
 
     api.on('files/delete_v2', () =>
       routeError({ '.tag': 'path_lookup', path_lookup: { '.tag': 'not_found' } }),

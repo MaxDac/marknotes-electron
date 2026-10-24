@@ -218,6 +218,8 @@ export class DriveService {
         return store.createFolder(request.path);
       case 'delete':
         return store.delete(request.entry);
+      case 'rename':
+        return store.rename(request.entry, request.toPath);
       case 'readManifest':
         return store.readManifest();
       case 'writeManifest':

@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_PASSES, SyncScheduler } from '@marknotes/sync';
+import { DEFAULT_MAX_PASSES, localDeletions, SyncScheduler } from '@marknotes/sync';
 import type { NoteStore } from './noteStore';
 import { localChanges, SyncEngine, type SyncConflict, type SyncResult } from './syncEngine';
 import type { BaseContentStore, RemoteDriveStore, SyncMetadataStore } from './types';
@@ -57,11 +57,36 @@ export class MultiDriveSync {
     targets: DriveSyncTarget[],
     onOutcome?: (outcome: DriveSyncOutcome) => void,
   ): Promise<MultiDriveSyncResult> {
-    const byId = new Map(targets.map((t) => [t.driveId, t]));
     const outcomes = new Map<string, DriveSyncOutcome>();
+    for (const target of targets) {
+      try {
+        await this.engine(target).recoverRenames();
+      } catch (error) {
+        const outcome: DriveSyncOutcome = {
+          driveId: target.driveId,
+          result: null,
+          error: error instanceof Error ? error.message : String(error),
+        };
+        outcomes.set(target.driveId, outcome);
+        onOutcome?.(outcome);
+      }
+    }
+    // Capture deletions for every drive before the first drive can recreate a moved note.
+    const local = await this.local.listAll();
+    for (const target of targets) {
+      if (outcomes.has(target.driveId)) continue;
+      const records = await target.metadata.all();
+      const deleted = new Set(localDeletions(local, records));
+      for (const record of records) {
+        if (deleted.has(record.path) && !record.localDeleted) {
+          await target.metadata.upsert({ ...record, localDeleted: true });
+        }
+      }
+    }
+    const byId = new Map(targets.map((t) => [t.driveId, t]));
     const conflicts: SyncConflict[] = [];
     const scheduler = new SyncScheduler(
-      targets.map((t) => t.driveId),
+      targets.filter((t) => !outcomes.has(t.driveId)).map((t) => t.driveId),
       this.maxPassesPerDrive,
     );
     try {

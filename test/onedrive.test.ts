@@ -169,26 +169,45 @@ describe('OneDriveDriveStore', () => {
     expect(posts[0].body).toContain('"name":"MarkNotes"');
   });
 
-  it('creates nested folders, reusing known ones and resolving conflicts', async () => {
+  it('creates nested folders with reusable parents and a create-only target', async () => {
     await store.snapshot();
-    server.route('POST /v1.0/me/drive/items/f1/children', '{"error":{"message":"exists"}}', 409);
-    server.route('GET /v1.0/me/drive/items/root:/Work/Ideas:', folder('f2', 'Ideas', 'f1'));
+    server.route('POST /v1.0/me/drive/items/f1/children', folder('f2', 'Ideas', 'f1'), 201);
     const ideas = await store.createFolder('Work/Ideas');
     expect(ideas).toMatchObject({ path: 'Work/Ideas', id: 'f2', isFolder: true, version: '' });
     expect(server.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
+    server.route('POST /v1.0/me/drive/items/f1/children', '{"error":{"message":"exists"}}', 409);
+    server.route('GET /v1.0/me/drive/items/root:/Work/Ideas:', folder('f2', 'Ideas', 'f1'));
+    await expect(store.createFolder('Work/Ideas')).rejects.toThrow(/409/);
+    expect(server.requests.some((r) => r.path === '/v1.0/me/drive/items/root:/Work/Ideas:')).toBe(false);
     await expect(store.createFolder('')).rejects.toThrow(/synced folder itself/);
   });
 
-  it('delete ignores missing items and forgets the subtree', async () => {
+  it('refuses recursive folder deletion and retains the cached subtree', async () => {
     const entries = new Map((await store.snapshot()).map((e) => [e.path, e]));
     server.route('DELETE /v1.0/me/drive/items/f1', '', 204);
-    await store.delete(entries.get('Work')!);
+    await expect(store.delete(entries.get('Work')!)).rejects.toThrow(/atomic empty-only/);
+    expect(server.requests.some((r) => r.method === 'DELETE')).toBe(false);
     server.route('GET /v1.0/delta1', `{"value":[],"@odata.deltaLink":"${base}/delta2"}`);
-    expect((await store.snapshot()).map((e) => e.path)).toEqual(['Todo.md']);
+    expect((await store.snapshot()).map((e) => e.path).sort()).toEqual(['Todo.md', 'Work', 'Work/Plan.md']);
+  });
+
+  it('delete ignores missing files and reports other failures', async () => {
+    const entries = new Map((await store.snapshot()).map((e) => [e.path, e]));
     // 404: already gone.
     await store.delete(entries.get('Todo.md')!);
-    server.route('DELETE /v1.0/me/drive/items/n1', '{"error":{"message":"locked"}}', 423);
-    await expect(store.delete(entries.get('Todo.md')!)).rejects.toThrow('OneDrive error 423: locked');
+    server.route('DELETE /v1.0/me/drive/items/n2', '{"error":{"message":"locked"}}', 423);
+    await expect(store.delete(entries.get('Work/Plan.md')!)).rejects.toThrow('OneDrive error 423: locked');
+  });
+
+  it('never substitutes refreshed cache versions for a stale planned write or deletion', async () => {
+    const entries = new Map((await store.snapshot()).map((e) => [e.path, e]));
+    const old = entries.get('Work/Plan.md')!;
+    server.route('PUT /v1.0/me/drive/items/n2/content', file('n2', 'Plan.md', 'f1', 'c5'));
+    await store.uploadRevision(old, bytes('new'));
+    const requests = server.requests.length;
+    await expect(store.uploadRevision(old, bytes('stale'))).rejects.toBeInstanceOf(RemoteChangedError);
+    await expect(store.delete(old)).rejects.toBeInstanceOf(RemoteChangedError);
+    expect(server.requests).toHaveLength(requests);
   });
 
   it('a failed full traversal keeps no delta link, so the next snapshot traverses again', async () => {
@@ -204,9 +223,6 @@ describe('OneDriveDriveStore', () => {
     server.route('DELETE /v1.0/me/drive/items/n2', '{"error":{"message":"changed"}}', 412);
     await expect(store.delete(entries.get('Work/Plan.md')!)).rejects.toBeInstanceOf(RemoteChangedError);
     expect(server.requests.at(-1)!.headers['if-match']).toBe('e-c2');
-    server.route('DELETE /v1.0/me/drive/items/f1', '', 204);
-    await store.delete(entries.get('Work')!);
-    expect(server.requests.at(-1)!.headers['if-match']).toBeUndefined();
   });
 
   it('writes and reads the local modification time as fileSystemInfo.lastModifiedDateTime', async () => {
@@ -223,6 +239,7 @@ describe('OneDriveDriveStore', () => {
     const created = await store.uploadNew('New.md', bytes('x'), Date.parse('2023-05-06T07:08:09Z'));
     const patch = server.requests.at(-1)!;
     expect(patch.method).toBe('PATCH');
+    expect(patch.headers['if-match']).toBe('e-c6');
     expect(JSON.parse(patch.body)).toEqual({
       fileSystemInfo: { lastModifiedDateTime: '2023-05-06T07:08:09.000Z' },
     });
@@ -233,6 +250,33 @@ describe('OneDriveDriveStore', () => {
     const entries = new Map((await store.snapshot()).map((e) => [e.path, e]));
     server.route('GET /v1.0/me/drive/items/n2/content', '# Plan');
     expect(text(await store.download(entries.get('Work/Plan.md')!))).toBe('# Plan');
+  });
+
+  it('case-only moves are conditional stable-id renames with no-clobber behavior', async () => {
+    const entries = new Map((await store.snapshot()).map((e) => [e.path, e]));
+    server.route(
+      'PATCH /v1.0/me/drive/items/n1?@microsoft.graph.conflictBehavior=fail',
+      file('n1', 'todo.md', 'root', 'c1'),
+    );
+    await store.rename(entries.get('Todo.md')!, 'todo.md');
+    const request = server.requests.at(-1)!;
+    expect(request.headers['if-match']).toBe('e-c1');
+    expect(JSON.parse(request.body)).toEqual({
+      name: 'todo.md',
+      '@microsoft.graph.conflictBehavior': 'fail',
+    });
+    server.route('GET /v1.0/delta1', `{"value":[],"@odata.deltaLink":"${base}/delta2"}`);
+    expect((await store.snapshot()).some((e) => e.path === 'todo.md' && e.id === 'n1')).toBe(true);
+  });
+
+  it('a case-only move never retries a changed or occupied target destructively', async () => {
+    const entries = new Map((await store.snapshot()).map((e) => [e.path, e]));
+    const url = 'PATCH /v1.0/me/drive/items/n1?@microsoft.graph.conflictBehavior=fail';
+    server.route(url, '{"error":{"message":"changed"}}', 412);
+    await expect(store.rename(entries.get('Todo.md')!, 'todo.md')).rejects.toBeInstanceOf(RemoteChangedError);
+    server.route(url, '{"error":{"message":"occupied"}}', 409);
+    await expect(store.rename(entries.get('Todo.md')!, 'todo.md')).rejects.toThrow(/409/);
+    expect(server.requests.filter((r) => r.method === 'PATCH')).toHaveLength(2);
   });
 
   it('401 is reported as RemoteUnavailableError', async () => {

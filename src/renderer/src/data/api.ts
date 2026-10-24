@@ -1,5 +1,5 @@
 import type { MarkNotesApi, RemoteOp, Result } from '../../../preload/api';
-import type { RemoteDriveStore, RemoteEntry } from '../../../shared/types';
+import type { DriveProvider, RemoteDriveStore, RemoteEntry } from '../../../shared/types';
 
 export const api = (): MarkNotesApi => window.marknotes;
 
@@ -12,7 +12,15 @@ export async function unwrap<T>(promise: Promise<Result<T>>): Promise<T> {
 
 /** RemoteDriveStore living in the main process, reached over IPC. */
 export class IpcRemoteDriveStore implements RemoteDriveStore {
-  constructor(private readonly driveId: string) {}
+  readonly supportsCaseOnlyRename: boolean;
+  readonly timestampResolutionMillis: number;
+  constructor(
+    private readonly driveId: string,
+    provider?: DriveProvider,
+  ) {
+    this.supportsCaseOnlyRename = provider === 'onedrive';
+    this.timestampResolutionMillis = provider === 'dropbox' ? 1000 : 1;
+  }
   private call<T>(op: RemoteOp) {
     return unwrap(api().remote(this.driveId, op)) as Promise<T>;
   }
@@ -33,6 +41,9 @@ export class IpcRemoteDriveStore implements RemoteDriveStore {
   }
   delete(entry: RemoteEntry) {
     return this.call<void>({ op: 'delete', entry });
+  }
+  rename(entry: RemoteEntry, toPath: string) {
+    return this.call<void>({ op: 'rename', entry, toPath });
   }
   readManifest() {
     return this.call<Uint8Array | null>({ op: 'readManifest' });

@@ -1,7 +1,9 @@
 import {
   buildManifest,
+  foldCase,
   isAttachmentPath,
   isSyncedEntry,
+  localDeletions,
   MANIFEST_PATH,
   plan,
   reconcile,
@@ -9,12 +11,20 @@ import {
   type Action,
   type LocalEntry,
   type Side,
+  type ReconcileOutcome,
 } from '@marknotes/sync';
 import { generateNoteId } from './frontMatter';
 import { utf8 } from './hashing';
 import type { NoteStore } from './noteStore';
 import * as P from './paths';
-import type { BaseContentStore, RemoteDriveStore, RemoteEntry, SyncMetadataStore } from './types';
+import type {
+  BaseContentStore,
+  PendingConflictCopy,
+  PendingRename,
+  RemoteDriveStore,
+  RemoteEntry,
+  SyncMetadataStore,
+} from './types';
 
 /**
  * A note edited on both sides whose edits could not be merged. The newest version (`winner`) was kept at `path` and
@@ -87,6 +97,10 @@ export class SyncEngine {
   sync(): Promise<SyncResult> {
     return new SyncRun(this).execute();
   }
+
+  recoverRenames(): Promise<void> {
+    return new SyncRun(this).recoverRenames();
+  }
 }
 
 class SyncRun {
@@ -102,11 +116,32 @@ class SyncRun {
   /** SHA-256 of every local file the plan saw, by path. */
   private readonly planned = new Map<string, string>();
   private readonly knownPaths = new Set<string>();
+  private readonly blocked = new Set<string>();
 
   constructor(private readonly e: SyncEngine) {}
 
   async execute(): Promise<SyncResult> {
     const { local, remote, metadata } = this.e;
+    await this.recoverRenames();
+    const recordsBeforeReplay = await metadata.all();
+    const deleted = new Set(localDeletions(await local.listAll(), recordsBeforeReplay));
+    for (const record of recordsBeforeReplay) {
+      if (deleted.has(record.path) && !record.localDeleted)
+        await metadata.upsert({ ...record, localDeleted: true });
+    }
+    for (const pending of await metadata.pendingConflicts()) {
+      await this.guarded(pending.intent.path, async () => {
+        this.blocked.add(pending.intent.path);
+        this.blocked.add(pending.intent.copyPath);
+        await this.replayConflict(pending);
+        this.blocked.delete(pending.intent.path);
+        this.blocked.delete(pending.intent.copyPath);
+      });
+      if (this.blocked.has(pending.intent.path)) {
+        const latest = (await metadata.pendingConflicts()).find((p) => p.intent.path === pending.intent.path);
+        if (latest) this.blocked.add(latest.intent.copyPath);
+      }
+    }
     const localEntries: LocalEntry[] = [];
     for (const entry of await local.listAll()) {
       if (!isSyncedEntry(entry.path, entry.isFolder)) continue;
@@ -130,7 +165,14 @@ class SyncRun {
       records: await metadata.all(),
       manifest,
     });
-    for (const action of actions) await this.guarded(action.path, () => this.apply(action));
+    for (const action of actions) {
+      if (
+        ![...this.blocked].some(
+          (p) => p === action.path || P.isAncestor(p, action.path) || P.isAncestor(action.path, p),
+        )
+      )
+        await this.guarded(action.path, () => this.apply(action));
+    }
 
     await this.guarded(MANIFEST_PATH, async () => {
       const json = buildManifest(await metadata.all(), this.e.deviceId, this.e.clock(), manifest);
@@ -183,17 +225,6 @@ class SyncRun {
     return (await this.localHash(path)) === expected;
   }
 
-  /** True when no file below `folder` was added, changed or removed locally since planning. */
-  private async localTreeUnchanged(folder: string): Promise<boolean> {
-    const below = (path: string) => path === folder || P.isAncestor(folder, path);
-    const now = (await this.e.local.listAll()).filter(
-      (e) => !e.isFolder && below(e.path) && isSyncedEntry(e.path, false),
-    );
-    if (now.length !== [...this.planned.keys()].filter(below).length) return false;
-    for (const e of now) if (!(await this.localIs(e.path))) return false;
-    return true;
-  }
-
   private async mtime(path: string): Promise<number | undefined> {
     return (await this.e.local.entry(path))?.modifiedMillis;
   }
@@ -209,7 +240,7 @@ class SyncRun {
       case 'createRemoteFolder':
         return this.recordFolder(action.path, (await remote.createFolder(action.path)).id);
       case 'createLocalFolder':
-        await local.createFolder(action.path);
+        await local.createSyncedFolder(action.path);
         this.foldersCreated++;
         return this.recordFolder(action.path, action.remoteId);
       case 'forget':
@@ -232,7 +263,12 @@ class SyncRun {
         const bytes = await remote.download(action.remote);
         checkAttachment(action.path, bytes);
         if (!(await this.localIs(action.path))) return;
-        await local.writeBytes(action.path, bytes, action.remote.modifiedMillis || undefined);
+        await local.writeSyncedBytes(
+          action.path,
+          bytes,
+          action.remote.modifiedMillis,
+          this.planned.get(action.path),
+        );
         await this.recordFile(action.path, action.remote, bytes);
         this.downloaded++;
         return;
@@ -249,7 +285,7 @@ class SyncRun {
         return;
       case 'deleteLocal':
         if (!(await this.localIs(action.path))) return;
-        await local.delete(action.path);
+        await local.deleteSynced(action.path, this.planned.get(action.path));
         await this.forget(action.path);
         this.deletedLocal++;
         return;
@@ -259,8 +295,7 @@ class SyncRun {
         this.deletedRemote++;
         return;
       case 'deleteLocalFolder':
-        if (!(await this.localTreeUnchanged(action.path))) return;
-        await local.delete(action.path);
+        await local.deleteSynced(action.path);
         await this.forgetTree(action.path, action.forget);
         this.deletedLocal++;
         return;
@@ -271,7 +306,110 @@ class SyncRun {
         return;
       case 'reconcile':
         return this.reconcileNote(action.path, action.remote, action.hasRecord);
+      case 'renameLocal':
+      case 'renameRemote': {
+        if (action.kind === 'renameRemote' && remote.supportsCaseOnlyRename === false)
+          throw new Error('This drive does not support a verified no-clobber case-only move');
+        const records = (await this.e.metadata.all()).filter(
+          (r) => r.path === action.path || P.isAncestor(action.path, r.path),
+        );
+        const bases: PendingRename['bases'] = [];
+        for (const record of records) {
+          const bytes = await base.get(record.path);
+          if (bytes) bases.push({ path: record.path, bytes });
+        }
+        const historyOnly = action.kind === 'renameLocal' && !(await local.exists(action.path));
+        const pending: PendingRename = {
+          path: action.path,
+          toPath: action.toPath,
+          side: action.kind === 'renameLocal' ? 'local' : 'remote',
+          remote: action.remote,
+          token:
+            (await local.syncRenameToken(historyOnly ? action.toPath : action.path)) ?? crypto.randomUUID(),
+          historyOnly,
+          records,
+          bases,
+        };
+        await this.e.metadata.putRename(pending);
+        await this.completeRename(pending);
+        return;
+      }
     }
+  }
+
+  async recoverRenames() {
+    for (const pending of await this.e.metadata.pendingRenames()) await this.completeRename(pending);
+  }
+
+  private async completeRename(pending: PendingRename) {
+    const { local, remote, metadata, base } = this.e;
+    if (pending.side === 'local') {
+      if (!(await local.hasSyncRenameToken(pending.toPath, pending.token))) {
+        if (pending.historyOnly) {
+          await local.markSyncedRename(
+            pending.toPath,
+            pending.token,
+            pending.records.map((r) => ({
+              path: pending.toPath + r.path.substring(pending.path.length),
+              isFolder: r.isFolder,
+              hash: r.localHash,
+            })),
+          );
+        } else {
+          if (!(await local.exists(pending.path)))
+            throw new Error(`${pending.path}: cannot verify interrupted local rename`);
+          const hashes = new Map(
+            pending.records.filter((r) => !r.isFolder).map((r) => [r.path, r.localHash]),
+          );
+          await local.renameSynced(
+            pending.path,
+            pending.toPath,
+            hashes,
+            pending.token,
+            new Set(pending.records.map((r) => r.path)),
+          );
+        }
+      }
+      this.foldersCreated++;
+    } else {
+      const entry = (await remote.snapshot()).find((e) => e.id === pending.remote.id);
+      if (!entry || (entry.path !== pending.path && entry.path !== pending.toPath))
+        throw new Error(`${pending.path}: cannot verify interrupted drive rename`);
+      if (entry.path === pending.path && entry.version !== pending.remote.version) {
+        const current = await metadata.all();
+        const migratedPaths = new Set(
+          pending.records.map((r) => pending.toPath + r.path.substring(pending.path.length)),
+        );
+        const untouched =
+          pending.records.every((r) =>
+            current.some(
+              (c) =>
+                c.path === r.path &&
+                c.remoteId === r.remoteId &&
+                c.remoteVersion === r.remoteVersion &&
+                c.localHash === r.localHash &&
+                c.isFolder === r.isFolder,
+            ),
+          ) && !current.some((r) => migratedPaths.has(r.path));
+        if (!untouched)
+          throw new Error(`${pending.path}: drive changed during interrupted history migration`);
+        await metadata.deleteRename(pending.path);
+        this.errors.push(`${pending.path}: changed on the drive before the case-only move`);
+        return;
+      }
+      if (entry.path !== pending.toPath) await remote.rename(pending.remote, pending.toPath);
+    }
+    for (const copy of pending.bases) {
+      await base.put(pending.toPath + copy.path.substring(pending.path.length), copy.bytes);
+    }
+    for (const record of pending.records) {
+      const migrated = { ...record, path: pending.toPath + record.path.substring(pending.path.length) };
+      delete migrated.localDeleted;
+      await metadata.upsert(migrated);
+    }
+    for (const record of pending.records) await metadata.delete(record.path);
+    await base.delete(pending.path);
+    await metadata.deleteRename(pending.path);
   }
 
   /** The note changed on both sides: keep it, merge it, or keep the newest and save the other as a copy. */
@@ -282,6 +420,7 @@ class SyncRun {
     const remoteBytes = await remote.download(entry);
     const baseBytes = hasRecord ? await base.get(path) : null;
     const baseText = baseBytes ? utf8.decode(baseBytes) : null;
+    const pending = (await this.e.metadata.pendingConflicts()).find((p) => p.intent.path === path);
     const outcome = reconcile({
       path,
       local: utf8.decode(localBytes),
@@ -291,6 +430,8 @@ class SyncRun {
       base: baseText,
       existingPaths: [...this.knownPaths],
       newId: this.e.newId(),
+      conflictCopyIntent: pending?.intent ?? null,
+      existingCopy: pending ? await this.existingCopy(pending) : null,
     });
     switch (outcome.kind) {
       case 'same':
@@ -300,7 +441,7 @@ class SyncRun {
         const bytes = utf8.encode(outcome.text);
         if (!(await this.localIs(path, localHash))) return;
         const now = this.e.clock();
-        await local.writeBytes(path, bytes, now);
+        await local.writeSyncedBytes(path, bytes, now, localHash);
         await this.recordFile(path, await remote.uploadRevision(entry, bytes, now), bytes);
         this.merged++;
         return;
@@ -308,9 +449,17 @@ class SyncRun {
       case 'newestWins': {
         // The losing version is saved locally as the conflicted copy before the note is overwritten.
         if (!(await this.localIs(path, localHash))) return;
-        const copyBytes = utf8.encode(outcome.copyText);
-        if (await local.exists(outcome.copyPath)) throw new Error(`${outcome.copyPath} already exists`);
-        await local.writeBytes(outcome.copyPath, copyBytes);
+        const journal: PendingConflictCopy = {
+          intent: outcome.conflictCopyIntent,
+          copyText: outcome.copyText,
+          localText: utf8.decode(localBytes),
+          remoteText: utf8.decode(remoteBytes),
+          remote: entry,
+          baseText,
+          winner: outcome.winner,
+        };
+        await this.e.metadata.putConflict(journal);
+        await this.writeLocalCopy(journal);
         this.knownPaths.add(outcome.copyPath);
         if (outcome.winner === 'local') {
           const uploaded = await remote.uploadRevision(entry, localBytes, await this.mtime(path));
@@ -319,22 +468,142 @@ class SyncRun {
         } else {
           // An edit saved meanwhile is kept; the copy stays as a new note for the next sync.
           if (!(await this.localIs(path, localHash))) return;
-          await local.writeBytes(path, remoteBytes, entry.modifiedMillis || undefined);
+          await local.writeSyncedBytes(path, remoteBytes, entry.modifiedMillis, localHash);
           await this.recordFile(path, entry, remoteBytes);
           this.downloaded++;
         }
-        this.conflicts.push({
-          path,
-          copyPath: outcome.copyPath,
-          winner: outcome.winner,
-          baseText,
-          driveId: this.e.driveId,
-        });
-        const copy = await remote.uploadNew(outcome.copyPath, copyBytes, await this.mtime(outcome.copyPath));
-        await this.recordFile(outcome.copyPath, copy, copyBytes);
-        this.uploaded++;
+        await this.finishCopy(journal);
+        await this.e.metadata.deleteConflict(path);
+        this.addConflict(journal);
         return;
       }
+    }
+  }
+
+  private addConflict(pending: PendingConflictCopy) {
+    if (this.conflicts.some((c) => c.copyPath === pending.intent.copyPath)) return;
+    this.conflicts.push({
+      path: pending.intent.path,
+      copyPath: pending.intent.copyPath,
+      winner: pending.winner,
+      baseText: pending.baseText,
+      driveId: this.e.driveId,
+    });
+  }
+
+  private async existingCopy(pending: PendingConflictCopy) {
+    const path = pending.intent.copyPath;
+    const local = await this.e.local.entry(path);
+    const remote = (await this.e.remote.snapshot()).find((e) => foldCase(e.path) === foldCase(path));
+    const candidates: { path: string; text: string; modifiedMillis: number }[] = [];
+    if (local)
+      candidates.push({
+        path: local.path,
+        text: local.isFolder ? '' : utf8.decode(await this.e.local.readBytes(path)),
+        modifiedMillis: local.modifiedMillis,
+      });
+    if (remote)
+      candidates.push({
+        path: remote.path,
+        text: remote.isFolder ? '' : utf8.decode(await this.e.remote.download(remote)),
+        modifiedMillis: this.remoteTimeMatches(remote.modifiedMillis, pending.intent.copyModifiedMillis)
+          ? pending.intent.copyModifiedMillis
+          : remote.modifiedMillis,
+      });
+    return (
+      candidates.find(
+        (c) =>
+          c.path !== path ||
+          c.text !== pending.copyText ||
+          c.modifiedMillis !== pending.intent.copyModifiedMillis,
+      ) ??
+      candidates[0] ??
+      null
+    );
+  }
+
+  private async writeLocalCopy(pending: PendingConflictCopy) {
+    const { copyPath, copyModifiedMillis } = pending.intent;
+    const entry = await this.e.local.entry(copyPath);
+    if (entry) {
+      if (
+        entry.isFolder ||
+        entry.modifiedMillis !== copyModifiedMillis ||
+        utf8.decode(await this.e.local.readBytes(copyPath)) !== pending.copyText
+      )
+        throw new Error(`${copyPath} is occupied by a different conflicted copy`);
+      return;
+    }
+    await this.e.local.writeSyncedBytes(copyPath, utf8.encode(pending.copyText), copyModifiedMillis);
+  }
+
+  private async finishCopy(pending: PendingConflictCopy) {
+    await this.writeLocalCopy(pending);
+    const { copyPath, copyModifiedMillis } = pending.intent;
+    const bytes = utf8.encode(pending.copyText);
+    let remoteCopy = (await this.e.remote.snapshot()).find((e) => foldCase(e.path) === foldCase(copyPath));
+    if (remoteCopy) {
+      if (
+        remoteCopy.path !== copyPath ||
+        remoteCopy.isFolder ||
+        !this.remoteTimeMatches(remoteCopy.modifiedMillis, copyModifiedMillis) ||
+        utf8.decode(await this.e.remote.download(remoteCopy)) !== pending.copyText
+      )
+        throw new Error(`${copyPath} is occupied on the drive`);
+    } else {
+      remoteCopy = await this.e.remote.uploadNew(copyPath, bytes, copyModifiedMillis);
+      this.uploaded++;
+    }
+    await this.recordFile(copyPath, remoteCopy, bytes);
+  }
+
+  private remoteTimeMatches(actual: number, expected: number) {
+    const precision = this.e.remote.timestampResolutionMillis ?? 1;
+    return actual === Math.floor(expected / precision) * precision;
+  }
+
+  private async replayConflict(pending: PendingConflictCopy) {
+    const { local, remote, metadata } = this.e;
+    const localEntries = await local.listAll();
+    const remoteEntries = await remote.snapshot();
+    const outcome: ReconcileOutcome = reconcile({
+      path: pending.intent.path,
+      local: pending.localText,
+      localModifiedMillis: pending.intent.localModifiedMillis,
+      remote: pending.remoteText,
+      remoteEntry: pending.remote,
+      base: pending.baseText,
+      existingPaths: [...localEntries, ...remoteEntries].map((e) => e.path),
+      newId: this.e.newId(),
+      conflictCopyIntent: pending.intent,
+      existingCopy: await this.existingCopy(pending),
+    });
+    if (outcome.kind !== 'newestWins') throw new Error('Invalid durable conflicted-copy intent');
+    const replay = { ...pending, intent: outcome.conflictCopyIntent, copyText: outcome.copyText };
+    await metadata.putConflict(replay);
+    await this.finishCopy(replay);
+    const winnerBytes = utf8.encode(pending.winner === 'local' ? pending.localText : pending.remoteText);
+    const recordedWinner = (await metadata.all()).find((r) => r.path === pending.intent.path);
+    if (
+      recordedWinner?.remoteId === pending.intent.remoteId &&
+      recordedWinner.localHash === sha256Hex(winnerBytes)
+    ) {
+      await this.e.base.put(pending.intent.path, winnerBytes);
+    }
+    const originalLocal = await local.entry(pending.intent.path);
+    const originalRemote = remoteEntries.find((e) => e.path === pending.intent.path);
+    const unchanged =
+      originalLocal &&
+      !originalLocal.isFolder &&
+      sha256Hex(await local.readBytes(pending.intent.path)) === pending.intent.localHash &&
+      originalLocal.modifiedMillis === pending.intent.localModifiedMillis &&
+      !!originalRemote &&
+      originalRemote.id === pending.intent.remoteId &&
+      originalRemote.version === pending.intent.remoteVersion &&
+      originalRemote.modifiedMillis === pending.intent.remoteModifiedMillis;
+    if (!unchanged) {
+      await metadata.deleteConflict(pending.intent.path);
+      this.addConflict(replay);
     }
   }
 

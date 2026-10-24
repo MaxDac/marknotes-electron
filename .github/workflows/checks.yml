@@ -34,15 +34,16 @@ jobs:
           node-version-file: .node-version
           cache: npm
       # Private feeds in the lockfile break Dependabot and fresh clones. The shared sync core (@marknotes/sync) is the
-      # only exception: it is installed from its GitHub release.
+      # only exception: it is built from an immutable GitHub source commit.
       - name: Check lockfile uses registry.npmjs.org
         run: |
-          bad=$(grep -oE '"resolved": *"[^"]*"' package-lock.json | grep -vE '"resolved": *"(https://registry\.npmjs\.org/|https://github\.com/MaxDac/marknotes-sync/releases/download/)' || true)
+          bad=$(grep -oE '"resolved": *"[^"]*"' package-lock.json | grep -vE '"resolved": *"(https://registry\.npmjs\.org/|git\+https://github\.com/MaxDac/marknotes-sync\.git#[0-9a-f]{40}")' || true)
           if [ -n "$bad" ]; then
             echo "::error file=package-lock.json::package-lock.json has resolved URLs outside https://registry.npmjs.org/. Regenerate it with the project .npmrc."
             echo "$bad"
             exit 1
           fi
+      - uses: ./.github/actions/setup-sync-core
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
@@ -58,6 +59,7 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - uses: ./.github/actions/setup-sync-core
       - run: npm ci
       - run: npm test
 
@@ -74,6 +76,7 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - uses: ./.github/actions/setup-sync-core
       - run: npm ci
       - run: npm run test:parity
 
@@ -87,6 +90,7 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - uses: ./.github/actions/setup-sync-core
       - run: npm ci
       - run: npm run build
       # Electron needs a display on Linux runners.
@@ -111,6 +115,7 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - uses: ./.github/actions/setup-sync-core
       - run: npm ci
       - run: npm run dist -- --linux AppImage deb --publish never
       - name: Install package verification tools
@@ -146,6 +151,7 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - uses: ./.github/actions/setup-sync-core
       - run: npm ci
       - run: npm test -- test/dependency-compatibility.test.ts
       - name: Build installers (unsigned)
