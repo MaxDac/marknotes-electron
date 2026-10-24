@@ -3,10 +3,12 @@ import { cleanUnusedAttachments } from '../../../shared/attachments';
 import { PROVIDER_NAMES, syncFolder } from '../../../shared/types';
 import logo from '../../../../branding/marknotes-mark.svg';
 import type { Page } from '../App';
+import { api } from '../data/api';
 import type { DriveStatus } from '../data/syncManager';
 import { AppLockSettings } from './AppLockSettings';
 import { ConfirmDialog } from './Dialog';
 import { errorMessage, useApp, useSyncState } from './context';
+import { OTHER_APPS, openOtherApp } from './otherApps';
 import { StorageWarning } from './StorageWarning';
 import { PALETTES, THEME_MODES, type ThemeColor } from './theme';
 
@@ -20,6 +22,7 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
   const [deleteLocal, setDeleteLocal] = useState(false);
   const [confirmWipe, setConfirmWipe] = useState(false);
   const [wipeError, setWipeError] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const lastDrive = state.drives.length === 1;
 
   return (
@@ -170,6 +173,28 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
             MarkNotes is a personal, non-commercial project. Sync happens on app launch and when you click
             &quot;Sync now&quot;; there is no background polling.
           </p>
+          <h3>Other MarkNotes apps</h3>
+          <p className="small">They share the same drive folder and note format.</p>
+          <div className="row" data-testid="other-apps">
+            {OTHER_APPS.map((other) => (
+              <button
+                key={other.url}
+                className="outlined"
+                title={other.url}
+                onClick={() => {
+                  setLinkError(null);
+                  void openOtherApp((url) => api().openExternal(url), other).then(setLinkError);
+                }}
+              >
+                {other.label}
+              </button>
+            ))}
+          </div>
+          {linkError && (
+            <p className="error small" role="alert">
+              {linkError}
+            </p>
+          )}
         </div>
       </div>
       {disconnect && (

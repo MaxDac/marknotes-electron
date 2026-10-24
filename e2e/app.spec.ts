@@ -65,6 +65,35 @@ test('loads the real updater without checking for releases', async () => {
   }
 });
 
+test('settings link to the other MarkNotes apps in the browser', async () => {
+  const userData = newUserData();
+  const { app, page } = await launch(userData);
+  try {
+    await app.evaluate(({ shell }) => {
+      const opened: string[] = [];
+      (globalThis as { openedUrls?: string[] }).openedUrls = opened;
+      shell.openExternal = async (url: string) => {
+        opened.push(url);
+      };
+    });
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const links = page.getByTestId('other-apps').getByRole('button');
+    await expect(links).toHaveText([
+      'MarkNotes for Android (F-Droid)',
+      'MarkNotes Pro for Android (GitHub Releases)',
+      'MarkNotes Web',
+    ]);
+    await page.getByRole('button', { name: 'MarkNotes Web' }).click();
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as { openedUrls?: string[] }).openedUrls))
+      .toEqual(['https://marknotes.fly.dev']);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
+
 async function createNote(page: Page, name: string) {
   await page.getByTestId('new-note').click();
   await page.getByRole('textbox', { name: 'Name' }).fill(name);
