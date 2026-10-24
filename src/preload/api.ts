@@ -8,6 +8,21 @@ export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
  */
 export type SecureStorageStatus = 'secure' | 'weak' | 'unavailable';
 
+/**
+ * How the key that encrypts the local notes is protected: `keychain` (OS keychain), `passphrase` (app lock) or
+ * `none` (no keychain protects anything, e.g. Linux without a keyring: the app lock is recommended).
+ */
+export type LocalKeyProtection = 'keychain' | 'passphrase' | 'none';
+
+export interface LockStatus {
+  /** `error`: the key cannot be read (e.g. the keychain changed); only deleting the local data helps. */
+  state: 'unlocked' | 'locked' | 'error';
+  /** Whether the app lock (passphrase) is enabled. */
+  enabled: boolean;
+  protection: LocalKeyProtection;
+  error: string | null;
+}
+
 export interface SignedIn {
   id: string;
   provider: DriveProvider;
@@ -57,6 +72,23 @@ export interface MarkNotesApi {
   deviceId(): Promise<Result<string>>;
   /** How credentials are protected on this device (see `SecureStorageStatus`). */
   secureStorage(): Promise<Result<SecureStorageStatus>>;
+  lockStatus(): Promise<Result<LockStatus>>;
+  /** The key that encrypts the local notes; fails while locked. */
+  localKey(): Promise<Result<Uint8Array>>;
+  /** Wrong passphrases fail with a generic error after a short delay. */
+  unlock(passphrase: string): Promise<Result<LockStatus>>;
+  enableLock(passphrase: string): Promise<Result<LockStatus>>;
+  disableLock(passphrase: string): Promise<Result<LockStatus>>;
+  changePassphrase(oldPassphrase: string, newPassphrase: string): Promise<Result<LockStatus>>;
+  /** Locks now (no-op without the app lock): the key is forgotten and the window reloads. */
+  lockNow(): Promise<Result<boolean>>;
+  /**
+   * Replaces the local key, so the data encrypted with the old one is unreadable; returns the new key. While locked
+   * this also removes the app lock (forgotten passphrase).
+   */
+  resetLocalKey(): Promise<Result<Uint8Array>>;
+  /** Subscribes to the app being locked (before the window reloads); returns an unsubscribe function. */
+  onLocked(listener: () => void): () => void;
   providers(): Promise<Result<ProviderInfo[]>>;
   drives(): Promise<Result<DriveAccount[]>>;
   signIn(provider: DriveProvider): Promise<Result<SignedIn | null>>;

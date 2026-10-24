@@ -399,6 +399,14 @@ textarea:focus {
   color: var(--primary);
   margin: 24px 0 8px;
 }
+.page h3 {
+  font-size: 14px;
+  margin: 16px 0 8px;
+}
+.lock-screen .page-inner {
+  max-width: 420px;
+  margin-top: 12vh;
+}
 .card {
   border: 1px solid var(--border);
   border-radius: 12px;

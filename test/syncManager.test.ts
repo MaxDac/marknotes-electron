@@ -26,7 +26,10 @@ let counter = 0;
 let calls: string[];
 
 beforeEach(async () => {
-  db = await openDatabase(`sync-manager-${++counter}`);
+  db = await openDatabase({
+    name: `sync-manager-${++counter}`,
+    key: crypto.getRandomValues(new Uint8Array(32)),
+  });
   calls = [];
   const ok = <T>(value: T) => Promise.resolve({ ok: true as const, value });
   (globalThis as { window?: unknown }).window = {

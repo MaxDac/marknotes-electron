@@ -16,7 +16,7 @@ let db: Db;
 let counter = 0;
 
 beforeEach(async () => {
-  db = await openDatabase(`test-${++counter}`);
+  db = await openDatabase({ name: `test-${++counter}`, key: crypto.getRandomValues(new Uint8Array(32)) });
 });
 
 describe('IndexedDB stores', () => {

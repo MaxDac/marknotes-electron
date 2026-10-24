@@ -10,6 +10,19 @@ const api: MarkNotesApi = {
   platform: process.platform,
   deviceId: call('app:deviceId') as MarkNotesApi['deviceId'],
   secureStorage: call('app:secureStorage') as MarkNotesApi['secureStorage'],
+  lockStatus: call('lock:status') as MarkNotesApi['lockStatus'],
+  localKey: call('lock:key') as MarkNotesApi['localKey'],
+  unlock: call('lock:unlock') as MarkNotesApi['unlock'],
+  enableLock: call('lock:enable') as MarkNotesApi['enableLock'],
+  disableLock: call('lock:disable') as MarkNotesApi['disableLock'],
+  changePassphrase: call('lock:change') as MarkNotesApi['changePassphrase'],
+  lockNow: call('lock:lockNow') as MarkNotesApi['lockNow'],
+  resetLocalKey: call('lock:reset') as MarkNotesApi['resetLocalKey'],
+  onLocked(listener) {
+    const handler = () => listener();
+    ipcRenderer.on('lock:locked', handler);
+    return () => ipcRenderer.removeListener('lock:locked', handler);
+  },
   providers: call('drives:providers') as MarkNotesApi['providers'],
   drives: call('drives:list') as MarkNotesApi['drives'],
   signIn: call('drives:signIn') as MarkNotesApi['signIn'],

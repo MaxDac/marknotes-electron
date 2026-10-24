@@ -13,7 +13,10 @@ let db: Db;
 let counter = 0;
 
 beforeEach(async () => {
-  db = await openDatabase(`chord-setting-${++counter}`);
+  db = await openDatabase({
+    name: `chord-setting-${++counter}`,
+    key: crypto.getRandomValues(new Uint8Array(32)),
+  });
 });
 
 describe('chord sequences setting', () => {
