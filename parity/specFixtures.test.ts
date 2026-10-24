@@ -1,6 +1,7 @@
 import {
   buildManifest,
   conflictCopyName,
+  localDeletions,
   merge3,
   mergeText,
   parseManifest,
@@ -33,6 +34,7 @@ import { isNoteId, joinFrontMatter, noteIdOf, splitFrontMatter, withNoteId } fro
 
 import { buildNoteIndex, filterNotes, findMention, noteIdFromHref, noteLink } from '../src/shared/noteLinks';
 import { MemoryNodeBackend, NoteStore } from '../src/shared/noteStore';
+import { executorSafety } from './executorSafety';
 
 /**
  * Runs the shared marknotes-spec golden fixtures (git submodule at spec/) against the desktop implementation.
@@ -125,6 +127,8 @@ const runners: Record<string, Runner> = {
 
   'sync/plan': (input) => plan(input),
   'sync/reconcile': (input) => reconcile(input),
+  'sync/executor-safety': executorSafety,
+  'sync/local-deletions': ({ local, records }) => ({ paths: localDeletions(local, records) }),
   'sync/multi-drive': ({ driveIds, maxPasses, reports }) => {
     const scheduler = new SyncScheduler(driveIds, maxPasses);
     const order: string[] = [];

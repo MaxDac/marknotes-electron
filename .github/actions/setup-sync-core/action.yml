@@ -1,0 +1,11 @@
+name: Set up shared sync build
+description: Install the pinned Rust and wasm-bindgen toolchains needed by the source-pinned sync dependency.
+runs:
+  using: composite
+  steps:
+    - name: Install pinned Rust and WebAssembly target
+      shell: bash
+      run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: wasm-bindgen-cli@0.2.129

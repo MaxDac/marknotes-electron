@@ -28,6 +28,7 @@ function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
  * synced folder or continuity is lost. The sync manifest lives in `.marknotes/` and is hidden from snapshots.
  */
 export class ProtonDriveStore implements RemoteDriveStore {
+  readonly supportsCaseOnlyRename = false;
   private rootUid: string | null = null;
   private scopeId: string | null = null;
   private cursor: string | undefined;
@@ -61,7 +62,7 @@ export class ProtonDriveStore implements RemoteDriveStore {
   async uploadNew(path: string, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
     const normalized = normalize(path);
     const parent = await this.ensureFolder(parentPath(normalized));
-    const now = modifiedMillis || this.now();
+    const now = modifiedMillis ?? this.now();
     const uploader = await this.client.getFileUploader(
       parent,
       baseName(normalized),
@@ -80,7 +81,7 @@ export class ProtonDriveStore implements RemoteDriveStore {
   }
 
   async uploadRevision(entry: RemoteEntry, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
-    const now = modifiedMillis || this.now();
+    const now = modifiedMillis ?? this.now();
     const uploader = await this.client.getFileRevisionUploader(
       entry.id,
       this.metadata(bytes, now, entry.path),
@@ -93,14 +94,23 @@ export class ProtonDriveStore implements RemoteDriveStore {
 
   async createFolder(path: string): Promise<RemoteEntry> {
     const normalized = normalize(path);
-    await this.ensureFolder(normalized);
-    const entry = this.entries.get(normalized);
-    if (!entry) throw new Error(`Couldn't create ${normalized} in Proton Drive`);
+    if (normalized === '') throw new Error('Cannot create the synced folder itself');
+    const parent = await this.ensureFolder(parentPath(normalized));
+    const folder = await this.client.createFolder(parent, baseName(normalized));
+    const entry: RemoteEntry = {
+      path: normalized,
+      id: folder.uid,
+      isFolder: true,
+      version: '',
+      modifiedMillis: folder.creationTime.getTime(),
+    };
+    this.entries.set(normalized, entry);
     return { ...entry };
   }
 
   /** Files are only trashed while their active revision is still the planned one. */
   async delete(entry: RemoteEntry): Promise<void> {
+    if (entry.isFolder) throw new Error('Proton Drive does not support atomic empty-only folder deletion');
     if (!entry.isFolder && entry.version !== '') {
       const node = await this.client.getNode(entry.id);
       if (!node.trashTime && node.activeRevision?.uid !== entry.version)
@@ -121,6 +131,10 @@ export class ProtonDriveStore implements RemoteDriveStore {
     const file = await this.findChild(folder.uid, MANIFEST_FILE_NAME);
     if (!file || !isFile(file)) return null;
     return this.downloadNode(file.uid);
+  }
+
+  async rename(_entry: RemoteEntry, _toPath: string): Promise<void> {
+    throw new Error('Proton Drive does not support a verified no-clobber case-only move through this SDK');
   }
 
   async writeManifest(bytes: Uint8Array): Promise<void> {

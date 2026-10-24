@@ -53,6 +53,7 @@ export type RemoteOp =
   | { op: 'uploadRevision'; entry: RemoteEntry; bytes: Uint8Array; modifiedMillis?: number }
   | { op: 'createFolder'; path: string }
   | { op: 'delete'; entry: RemoteEntry }
+  | { op: 'rename'; entry: RemoteEntry; toPath: string }
   | { op: 'readManifest' }
   | { op: 'writeManifest'; bytes: Uint8Array };
 

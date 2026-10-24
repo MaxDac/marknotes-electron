@@ -76,6 +76,7 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - uses: ./.github/actions/setup-sync-core
       - run: npm ci
       - name: Set version
         shell: bash

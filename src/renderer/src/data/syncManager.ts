@@ -204,7 +204,7 @@ export class SyncManager {
     if (reason) throw new Error(reason);
     return {
       driveId: account.id,
-      remote: new IpcRemoteDriveStore(account.id),
+      remote: new IpcRemoteDriveStore(account.id, account.provider),
       metadata: new IdbSyncMetadataStore(this.db, account.id),
       base: new IdbBaseContentStore(this.db, account.id),
     };

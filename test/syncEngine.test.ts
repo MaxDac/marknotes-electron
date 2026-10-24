@@ -299,7 +299,7 @@ describe('SyncEngine', () => {
     await assertStable();
   });
 
-  it('local folder deletion trashes remote folder once', async () => {
+  it('local folder deletion removes known children before empty folders', async () => {
     await local.write('a/x.md', 'x');
     await local.write('a/b/y.md', 'y');
     await syncClean();
@@ -308,7 +308,7 @@ describe('SyncEngine', () => {
 
     await syncClean();
 
-    expect(remote.calls).toEqual(['delete:a']);
+    expect(remote.calls).toEqual(['delete:a/b/y.md', 'delete:a/x.md', 'delete:a/b', 'delete:a']);
     expect(remote.exists('a')).toBe(false);
     expect(await metadata.all()).toEqual([]);
     await assertStable();
@@ -499,10 +499,10 @@ describe('SyncEngine', () => {
   it('a conflict writes the copy locally, then the note, then uploads the copy', async () => {
     await editBothSides('a\nb\n', 'a\nlocal\n', 2000, 'a\nremote\n', 3000);
     const steps: string[] = [];
-    const writeBytes = local.writeBytes.bind(local);
-    local.writeBytes = async (path, bytes, modified) => {
+    const writeBytes = local.writeSyncedBytes.bind(local);
+    local.writeSyncedBytes = async (path, bytes, modified, hash) => {
       steps.push(`write:${path}`);
-      return writeBytes(path, bytes, modified);
+      return writeBytes(path, bytes, modified, hash);
     };
     const uploadNew = remote.uploadNew.bind(remote);
     remote.uploadNew = async (path, bytes, modified) => {
@@ -517,10 +517,10 @@ describe('SyncEngine', () => {
 
   it('a conflicted copy that cannot be written leaves the note untouched', async () => {
     await editBothSides('a\nb\n', 'a\nlocal\n', 2000, 'a\nremote\n', 3000);
-    const writeBytes = local.writeBytes.bind(local);
-    local.writeBytes = async (path, bytes, modified) => {
+    const writeBytes = local.writeSyncedBytes.bind(local);
+    local.writeSyncedBytes = async (path, bytes, modified, hash) => {
       if (path === COPY) throw new Error('disk full');
-      return writeBytes(path, bytes, modified);
+      return writeBytes(path, bytes, modified, hash);
     };
 
     const result = await engine.sync();

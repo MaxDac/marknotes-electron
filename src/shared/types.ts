@@ -1,4 +1,5 @@
 import { join } from './paths';
+import type { ConflictCopyIntent, Side } from '@marknotes/sync';
 
 /** A file or folder in the synced remote folder. `path` is relative to the synced folder. */
 export interface RemoteEntry {
@@ -13,22 +14,30 @@ export interface RemoteEntry {
 
 /** Abstraction over a remote drive, scoped to the synced folder. */
 export interface RemoteDriveStore {
+  /** Known unsupported moves fail before a durable rename is reserved. */
+  readonly supportsCaseOnlyRename?: boolean;
+  /** Precision of provider modification times (Dropbox stores whole seconds). */
+  readonly timestampResolutionMillis?: number;
   snapshot(): Promise<RemoteEntry[]>;
   download(entry: RemoteEntry): Promise<Uint8Array>;
   /**
-   * Uploads a new file at `path`, creating missing parent folders. `modifiedMillis` is the local edit time, stored
+   * Creates a file at an unoccupied `path`, failing if any entry already exists (even identical content).
+   * Creates missing parent folders. `modifiedMillis` is the local edit time, stored
    * as the file's modification time (Dropbox `client_modified`, OneDrive `fileSystemInfo`, Proton claimed time).
    */
   uploadNew(path: string, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry>;
   /** Uploads new content for an existing file, only if it is still at `entry.version`. */
   uploadRevision(entry: RemoteEntry, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry>;
-  /** Creates a folder at `path`, creating missing parents. Returns the existing one if present. */
+  /** Creates a folder at an unoccupied `path`, creating missing parents; never adopts an existing target. */
   createFolder(path: string): Promise<RemoteEntry>;
   /**
    * Moves the entry to the remote trash. Files are only deleted while still at `entry.version`: otherwise it
    * throws (a step error, so the record is kept and the next sync downloads the change).
+   * Folders require an atomic empty-only delete; unsupported providers must throw without deleting anything.
    */
   delete(entry: RemoteEntry): Promise<void>;
+  /** A stable-id, no-clobber case-only move; unsupported providers throw without mutating anything. */
+  rename(entry: RemoteEntry, toPath: string): Promise<void>;
   /** Reads the sync manifest; null when missing. */
   readManifest(): Promise<Uint8Array | null>;
   /** Creates or overwrites the sync manifest. */
@@ -93,6 +102,7 @@ export interface SyncRecord {
   remoteVersion: string;
   localHash: string;
   syncedAt: number;
+  localDeleted?: boolean;
 }
 
 export interface SyncMetadataStore {
@@ -100,6 +110,34 @@ export interface SyncMetadataStore {
   upsert(record: SyncRecord): Promise<void>;
   delete(path: string): Promise<void>;
   clear(): Promise<void>;
+  pendingConflicts(): Promise<PendingConflictCopy[]>;
+  putConflict(conflict: PendingConflictCopy): Promise<void>;
+  deleteConflict(path: string): Promise<void>;
+  pendingRenames(): Promise<PendingRename[]>;
+  putRename(rename: PendingRename): Promise<void>;
+  deleteRename(path: string): Promise<void>;
+}
+
+export interface PendingRename {
+  path: string;
+  toPath: string;
+  side: 'local' | 'remote';
+  remote: RemoteEntry;
+  token: string;
+  historyOnly?: boolean;
+  records: SyncRecord[];
+  bases: { path: string; bytes: Uint8Array }[];
+}
+
+/** Written durably before any conflicted copy or winning note is changed. */
+export interface PendingConflictCopy {
+  intent: ConflictCopyIntent;
+  copyText: string;
+  localText: string;
+  remoteText: string;
+  remote: RemoteEntry;
+  baseText: string | null;
+  winner: Side;
 }
 
 /** Per drive, the content of every note the last time it was in sync (merge ancestor). */
@@ -113,6 +151,8 @@ export interface BaseContentStore {
 
 export class InMemorySyncMetadataStore implements SyncMetadataStore {
   private records = new Map<string, SyncRecord>();
+  private intents = new Map<string, PendingConflictCopy>();
+  private renames = new Map<string, PendingRename>();
   async all() {
     return [...this.records.values()];
   }
@@ -124,6 +164,26 @@ export class InMemorySyncMetadataStore implements SyncMetadataStore {
   }
   async clear() {
     this.records.clear();
+    this.intents.clear();
+    this.renames.clear();
+  }
+  async pendingConflicts() {
+    return [...this.intents.values()];
+  }
+  async putConflict(conflict: PendingConflictCopy) {
+    this.intents.set(conflict.intent.path, structuredClone(conflict));
+  }
+  async deleteConflict(path: string) {
+    this.intents.delete(path);
+  }
+  async pendingRenames() {
+    return [...this.renames.values()];
+  }
+  async putRename(rename: PendingRename) {
+    this.renames.set(rename.path, structuredClone(rename));
+  }
+  async deleteRename(path: string) {
+    this.renames.delete(path);
   }
 }
 

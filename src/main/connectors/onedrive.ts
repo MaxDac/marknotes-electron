@@ -1,3 +1,4 @@
+import { foldCase } from '@marknotes/sync';
 import {
   InteractionRequiredAuthError,
   PublicClientApplication,
@@ -9,7 +10,7 @@ import {
   type SilentFlowRequest,
 } from '@azure/msal-node';
 import { MANIFEST_PATH } from '../../shared/manifestPath';
-import { isAncestor, join } from '../../shared/paths';
+import { isAncestor, join, name, parent } from '../../shared/paths';
 import {
   RemoteChangedError,
   RemoteUnavailableError,
@@ -142,9 +143,14 @@ export class GraphClient {
     return this.sendJson('POST', url, body);
   }
 
-  async sendJson(method: string, url: string, body: Json): Promise<Json> {
+  async sendJson(
+    method: string,
+    url: string,
+    body: Json,
+    headers: Record<string, string> = {},
+  ): Promise<Json> {
     return GraphClient.json(
-      await this.send(method, url, { bytes: JSON.stringify(body), contentType: 'application/json' }),
+      await this.send(method, url, { bytes: JSON.stringify(body), contentType: 'application/json' }, headers),
     );
   }
 
@@ -259,8 +265,10 @@ export class OneDriveDriveStore implements RemoteDriveStore {
   }
 
   async uploadRevision(entry: RemoteEntry, bytes: Uint8Array, modifiedMillis?: number): Promise<RemoteEntry> {
-    const eTag = this.byId.get(entry.id)?.eTag;
-    const headers: Record<string, string> = eTag ? { 'If-Match': eTag } : {};
+    const cached = this.byId.get(entry.id);
+    if (!cached?.eTag || cached.entry.version !== entry.version || cached.entry.path !== entry.path)
+      throw new RemoteChangedError(entry.path);
+    const headers = { 'If-Match': cached.eTag };
     const item = await this.graph.putContent(this.graph.itemUrl(entry.id, '/content'), bytes, headers);
     return this.remember(await this.withModified(item, modifiedMillis), entry.path);
   }
@@ -268,22 +276,29 @@ export class OneDriveDriveStore implements RemoteDriveStore {
   /** Stores the local edit time as `fileSystemInfo.lastModifiedDateTime`, which snapshots read back. */
   private async withModified(item: Json, modifiedMillis: number | undefined): Promise<Json> {
     const id = str(item, 'id');
-    if (!modifiedMillis || id === null) return item;
-    return this.graph.sendJson('PATCH', this.graph.itemUrl(id), {
-      fileSystemInfo: { lastModifiedDateTime: new Date(modifiedMillis).toISOString() },
-    });
+    if (modifiedMillis === undefined || id === null) return item;
+    const eTag = str(item, 'eTag');
+    if (!eTag) throw new Error('OneDrive did not return the version needed to preserve the edit time');
+    return this.graph.sendJson(
+      'PATCH',
+      this.graph.itemUrl(id),
+      { fileSystemInfo: { lastModifiedDateTime: new Date(modifiedMillis).toISOString() } },
+      { 'If-Match': eTag },
+    );
   }
 
   async createFolder(path: string): Promise<RemoteEntry> {
     let parentId = await this.ensureRoot();
     let current = '';
     let result: RemoteEntry | null = null;
-    for (const segment of path.split('/').filter((it) => it !== '')) {
+    const segments = path.split('/').filter((it) => it !== '');
+    for (const [index, segment] of segments.entries()) {
       current = join(current, segment);
-      const known = [...this.byId.values()].find(
-        (it) => it.entry.isFolder && it.entry.path === current,
-      )?.entry;
-      const entry = known ?? (await this.createChildFolder(parentId, segment, current));
+      const isParent = index < segments.length - 1;
+      const known = isParent
+        ? [...this.byId.values()].find((it) => it.entry.isFolder && it.entry.path === current)?.entry
+        : undefined;
+      const entry = known ?? (await this.createChildFolder(parentId, segment, current, isParent));
       parentId = entry.id;
       result = entry;
     }
@@ -293,14 +308,12 @@ export class OneDriveDriveStore implements RemoteDriveStore {
 
   /** Files are only deleted while their eTag is the snapshot's (If-Match); 412 means it changed meanwhile. */
   async delete(entry: RemoteEntry): Promise<void> {
-    const eTag = entry.isFolder ? undefined : this.byId.get(entry.id)?.eTag;
+    if (entry.isFolder) throw new Error('OneDrive does not support atomic empty-only folder deletion');
+    const cached = this.byId.get(entry.id);
+    if (!cached?.eTag || cached.entry.version !== entry.version || cached.entry.path !== entry.path)
+      throw new RemoteChangedError(entry.path);
     try {
-      await this.graph.send(
-        'DELETE',
-        this.graph.itemUrl(entry.id),
-        undefined,
-        eTag ? { 'If-Match': eTag } : {},
-      );
+      await this.graph.send('DELETE', this.graph.itemUrl(entry.id), undefined, { 'If-Match': cached.eTag });
     } catch (e) {
       if (e instanceof GraphError && e.httpStatus === HTTP_PRECONDITION_FAILED) {
         throw new RemoteChangedError(entry.path);
@@ -322,6 +335,36 @@ export class OneDriveDriveStore implements RemoteDriveStore {
     }
   }
 
+  async rename(entry: RemoteEntry, toPath: string): Promise<void> {
+    const cached = this.byId.get(entry.id);
+    if (!cached?.eTag || cached.entry.path !== entry.path || cached.entry.version !== entry.version)
+      throw new RemoteChangedError(entry.path);
+    if (parent(entry.path) !== parent(toPath) || foldCase(entry.path) !== foldCase(toPath))
+      throw new Error('Only case-only renames within the same folder are supported');
+    let item: Json;
+    try {
+      item = await this.graph.sendJson(
+        'PATCH',
+        this.graph.itemUrl(entry.id) + '?@microsoft.graph.conflictBehavior=fail',
+        { name: name(toPath), '@microsoft.graph.conflictBehavior': 'fail' },
+        { 'If-Match': cached.eTag },
+      );
+    } catch (error) {
+      if (error instanceof GraphError && error.httpStatus === HTTP_PRECONDITION_FAILED)
+        throw new RemoteChangedError(entry.path);
+      throw error;
+    }
+    if (
+      str(item, 'id') !== entry.id ||
+      str(item, 'name') !== name(toPath) ||
+      (obj(item, 'folder') !== null) !== entry.isFolder
+    ) {
+      this.deltaLink = null;
+      throw new Error('OneDrive returned an unexpected case-only rename result');
+    }
+    await this.placeItem(entry.id, item, toPath);
+  }
+
   async writeManifest(bytes: Uint8Array): Promise<void> {
     await this.graph.putContent(
       this.graph.childPathUrl(await this.ensureRoot(), MANIFEST_PATH, '/content'),
@@ -333,14 +376,20 @@ export class OneDriveDriveStore implements RemoteDriveStore {
     return { name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' };
   }
 
-  private async createChildFolder(parentId: string, name: string, path: string): Promise<RemoteEntry> {
+  private async createChildFolder(
+    parentId: string,
+    name: string,
+    path: string,
+    reuseExisting: boolean,
+  ): Promise<RemoteEntry> {
     let item: Json;
     try {
       item = await this.graph.postJson(this.graph.itemUrl(parentId, '/children'), this.newFolderBody(name));
     } catch (e) {
-      if (!(e instanceof GraphError && e.httpStatus === HTTP_CONFLICT)) throw e;
+      if (!reuseExisting || !(e instanceof GraphError && e.httpStatus === HTTP_CONFLICT)) throw e;
       item = await this.graph.getJson(this.graph.childPathUrl(await this.ensureRoot(), path));
     }
+    if (obj(item, 'folder') === null) throw new Error(`${path} is not a folder in OneDrive`);
     return this.remember(item, path);
   }
 
