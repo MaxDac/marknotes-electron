@@ -97,7 +97,7 @@ export class IdbBaseContentStore implements BaseContentStore {
 }
 
 /** Settings about the app itself, not the notes: kept when the local data is deleted. */
-const APP_SETTINGS = new Set(['themeMode', 'themeColor']);
+const APP_SETTINGS = new Set(['themeMode', 'themeColor', 'chordSequences']);
 
 /**
  * Deletes every note, attachment, sync record and base copy stored on this device, with the sync state kept in the

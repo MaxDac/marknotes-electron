@@ -4,6 +4,7 @@ import type { NoteEntry } from '../../../shared/noteStore';
 import * as P from '../../../shared/paths';
 import logo from '../../../../branding/marknotes-mark.svg';
 import type { Page } from '../App';
+import { openNoteDecision } from '../data/chordSequences';
 import { ConfirmDialog, Dialog, NameDialog } from './Dialog';
 import { NoteEditor } from './ChordEditor';
 import { errorMessage, useApp, useNotesVersion, useSyncState } from './context';
@@ -14,7 +15,8 @@ type DialogState =
   | { kind: 'newFolder' }
   | { kind: 'rename'; entry: NoteEntry }
   | { kind: 'delete'; entry: NoteEntry }
-  | { kind: 'move'; entry: NoteEntry };
+  | { kind: 'move'; entry: NoteEntry }
+  | { kind: 'enableChords'; path: string };
 
 /** Folders sorted as a tree: case-insensitive, segment by segment. */
 const treeOrder = (a: string, b: string) => {
@@ -31,7 +33,7 @@ const formatDate = (millis: number) =>
   new Date(millis).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 export function Browser(props: { navigate(page: Page): void; hidden: boolean }) {
-  const { notes, sync } = useApp();
+  const { notes, sync, chordSequences, setChordSequences } = useApp();
   const syncState = useSyncState();
   const version = useNotesVersion();
   const [folder, setFolder] = useState('');
@@ -90,6 +92,16 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
     if (folder === from || P.isAncestor(from, folder)) setFolder(to + folder.substring(from.length));
   };
 
+  /** Opens a note, first asking to enable chord sequences when it is one and the setting is off. */
+  const requestOpen = useCallback(
+    async (path: string) => {
+      const text = chordSequences ? '' : await notes.read(path).catch(() => '');
+      if (openNoteDecision(text, chordSequences) === 'ask') setDialog({ kind: 'enableChords', path });
+      else setOpenNote(path);
+    },
+    [notes, chordSequences],
+  );
+
   const createActions = (testIdPrefix: string) => (
     <div className="empty-actions">
       <button
@@ -99,9 +111,11 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
       >
         New note
       </button>
-      <button data-testid={`${testIdPrefix}-new-chords`} onClick={() => setDialog({ kind: 'newChords' })}>
-        New chord sequence
-      </button>
+      {chordSequences && (
+        <button data-testid={`${testIdPrefix}-new-chords`} onClick={() => setDialog({ kind: 'newChords' })}>
+          New chord sequence
+        </button>
+      )}
     </div>
   );
 
@@ -115,9 +129,11 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
         <button className="filled" data-testid="new-note" onClick={() => setDialog({ kind: 'newNote' })}>
           New note
         </button>
-        <button data-testid="new-chords" onClick={() => setDialog({ kind: 'newChords' })}>
-          New chord sequence
-        </button>
+        {chordSequences && (
+          <button data-testid="new-chords" onClick={() => setDialog({ kind: 'newChords' })}>
+            New chord sequence
+          </button>
+        )}
         <button onClick={() => setDialog({ kind: 'newFolder' })}>New folder</button>
         <div className="spacer" />
         {syncState.conflicts.length > 0 && (
@@ -196,7 +212,7 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
                 key={entry.path}
                 className={`entry ${entry.path === openNote ? 'open' : ''}`}
                 data-testid="entry"
-                onClick={() => (entry.isFolder ? setFolder(entry.path) : setOpenNote(entry.path))}
+                onClick={() => (entry.isFolder ? setFolder(entry.path) : void requestOpen(entry.path))}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setMenu({ entry, x: e.clientX, y: e.clientY });
@@ -227,7 +243,7 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
             key={openNote}
             path={openNote}
             onClose={() => setOpenNote(null)}
-            onOpenNote={setOpenNote}
+            onOpenNote={(path) => void requestOpen(path)}
           />
         ) : (
           <div className="editor-pane">
@@ -280,6 +296,18 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
           confirm="Create"
           onClose={() => setDialog(null)}
           onSubmit={async (name) => setOpenNote(await notes.createChordSequence(folder, name.trim()))}
+        />
+      )}
+      {dialog?.kind === 'enableChords' && (
+        <ConfirmDialog
+          title="Enable chord sequences?"
+          message={`“${P.displayName(dialog.path)}” is a chord sequence, and chord sequences are turned off. Turn them on in Settings and open it?`}
+          confirm="Enable"
+          onClose={() => setDialog(null)}
+          onConfirm={() => {
+            setChordSequences(true);
+            setOpenNote(dialog.path);
+          }}
         />
       )}
       {dialog?.kind === 'newFolder' && (

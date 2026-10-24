@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NoteStore } from '../../shared/noteStore';
 import { api, unwrap } from './data/api';
+import { loadChordSequencesEnabled, saveChordSequencesEnabled } from './data/chordSequences';
 import { IdbNodeBackend, openDatabase, Settings } from './data/db';
 import { SyncManager } from './data/syncManager';
 import { AddDrive } from './ui/AddDrive';
@@ -19,6 +20,7 @@ interface Loaded {
   settings: Settings;
   mode: ThemeMode;
   color: ThemeColor;
+  chordSequences: boolean;
 }
 
 async function load(): Promise<Loaded> {
@@ -34,6 +36,7 @@ async function load(): Promise<Loaded> {
     settings,
     mode: await settings.get<ThemeMode>('themeMode', 'system'),
     color: await settings.get<ThemeColor>('themeColor', 'blue'),
+    chordSequences: await loadChordSequencesEnabled(settings),
   };
 }
 
@@ -48,6 +51,7 @@ export function App() {
   });
   const [systemDark, setSystemDark] = useState(darkQuery.matches);
   const [page, setPage] = useState<Page>('notes');
+  const [chordSequences, setChordSequencesState] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +60,7 @@ export function App() {
         if (cancelled) return;
         setLoaded(l);
         setThemeState({ mode: l.mode, color: l.color });
+        setChordSequencesState(l.chordSequences);
         l.sync.syncIfConnected();
       },
       (e) => setError(errorMessage(e)),
@@ -85,8 +90,13 @@ export function App() {
           void loaded.settings.set('themeMode', mode);
           void loaded.settings.set('themeColor', color);
         },
+        chordSequences,
+        setChordSequences(enabled) {
+          setChordSequencesState(enabled);
+          void saveChordSequencesEnabled(loaded.settings, enabled);
+        },
       },
-    [loaded, theme],
+    [loaded, theme, chordSequences],
   );
 
   if (error) return <div className="empty error">Could not open the notes: {error}</div>;

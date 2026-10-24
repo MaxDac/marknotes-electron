@@ -10,7 +10,7 @@ import { StorageWarning } from './StorageWarning';
 import { PALETTES, THEME_MODES, type ThemeColor } from './theme';
 
 export function SettingsPage(props: { navigate(page: Page): void }) {
-  const { notes, sync, theme, setTheme } = useApp();
+  const { notes, sync, theme, setTheme, chordSequences, setChordSequences } = useApp();
   const state = useSyncState();
   const [disconnect, setDisconnect] = useState<DriveStatus | null>(null);
   const [confirmClean, setConfirmClean] = useState(false);
@@ -112,6 +112,23 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
               ))}
             </div>
           </div>
+
+          <h2>Chord sequences</h2>
+          <label className="row">
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label="Chord sequences"
+              data-testid="chord-sequences-setting"
+              checked={chordSequences}
+              onChange={(e) => setChordSequences(e.target.checked)}
+            />
+            Create and edit chord sequences for guitar and bass
+          </label>
+          <p className="small">
+            When this is off, &quot;New chord sequence&quot; is hidden. Existing chord sequences are kept and
+            synced either way. This setting is stored on this device only.
+          </p>
 
           <h2>Images</h2>
           <p className="small">

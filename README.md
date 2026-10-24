@@ -26,7 +26,9 @@ and the same sync format, so all MarkNotes apps can share one drive folder.
   12th), add a name, tags and a note, then edit, duplicate, reorder or delete chords in the sequence. Chords with the
   same name and instrument are numbered (`1 C`, `2 C`). The file stays readable markdown (see the spec's
   "Chord sequences"); **View as text** opens it in the markdown editor, which is also used, with the error line, when
-  the file cannot be parsed.
+  the file cannot be parsed. Chord sequences are opt-in: turn on **Settings → Chord sequences** (off by default, stored
+  on this device only) to show **New chord sequence**. While it is off, opening a chord sequence asks whether to turn
+  it on; **Enable** turns it on and opens the note, **Cancel** leaves the note closed.
 - **Appearance**: theme System, Light or Dark, and an accent colour from 8 palettes.
 - **Multi-drive two-way sync** with any number of Proton Drive, Dropbox and OneDrive accounts. Sync runs on launch and
   on **Sync now** (no background polling). It keeps per-drive state and the `.marknotes/manifest.json` manifest, and merges lines
