@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ProviderInfo, SignedIn } from '../../../preload/api';
 import * as P from '../../../shared/paths';
 import {
+  alreadyConnectedMessage,
   DEFAULT_ROOT_FOLDER,
   PROVIDER_NAMES,
   type DriveProvider,
@@ -36,6 +37,13 @@ export function AddDrive(props: { onDone(): void }) {
   };
 
   const signedInAs = (account: SignedIn) => {
+    if (sync.current.drives.some((d) => d.account.id === account.id)) {
+      // Re-adding would reuse the drive's sync records with a new folder; the main process refuses it too.
+      void api().discardSignIn(account.id);
+      setError(alreadyConnectedMessage(account.label));
+      setStep({ kind: 'choose' });
+      return;
+    }
     signedIn.current = account;
     const info = providers.find((p) => p.provider === account.provider);
     setStep({ kind: 'folder', account, browsable: info?.browsable ?? false });

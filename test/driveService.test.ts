@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FakeConnector } from '../src/main/connectors/fake';
 import { DriveService } from '../src/main/driveService';
+import { FakeRemoteDriveStore } from '../src/shared/fakeRemote';
+import { MultiDriveSync, type DriveSyncTarget } from '../src/shared/multiDriveSync';
+import { MemoryNodeBackend, NoteStore } from '../src/shared/noteStore';
+import { InMemoryBaseContentStore, InMemorySyncMetadataStore } from '../src/shared/types';
 
 const service = () => {
   const file = join(mkdtempSync(join(tmpdir(), 'marknotes-')), 'drives.json');
@@ -63,5 +67,54 @@ describe('DriveService', () => {
     await expect(
       s.addDrive(account!.id, { remoteFolder: '', createRootFolder: true, rootFolderName: 'MarkNotes' }),
     ).rejects.toThrow('Sign in again');
+  });
+
+  it('refuses to re-add a connected account, whose sync records would then delete every note', async () => {
+    const { service: s } = service();
+    const local = new NoteStore(new MemoryNodeBackend(), () => 1000);
+    const multi = new MultiDriveSync(local, 'device', undefined, () => 1000);
+    const other = new FakeRemoteDriveStore();
+    const records = new Map<string, Omit<DriveSyncTarget, 'remote'>>();
+    const sync = async () => {
+      const targets: DriveSyncTarget[] = [];
+      for (const [driveId, remote] of [
+        ...(await s.drives()).map((d) => [d.id, s.store(d.id)] as const),
+        ['other', Promise.resolve(other)] as const,
+      ]) {
+        if (!records.has(driveId)) {
+          records.set(driveId, {
+            driveId,
+            metadata: new InMemorySyncMetadataStore(),
+            base: new InMemoryBaseContentStore(),
+          });
+        }
+        targets.push({ ...records.get(driveId)!, remote: await remote });
+      }
+      for (const outcome of (await multi.sync(targets)).outcomes) expect(outcome.error).toBeNull();
+    };
+
+    // Proton account ids are per user, so signing in to the same user again yields the connected drive's id.
+    const first = await s.signIn('proton');
+    const drive = await s.addDrive(first!.id, {
+      remoteFolder: 'Documents',
+      createRootFolder: true,
+      rootFolderName: 'MarkNotes',
+    });
+    await local.write('n.md', 'hello');
+    await sync();
+    const fake = (s.connectors.proton as FakeConnector).drive(drive.id);
+    expect(fake.text('Documents/MarkNotes/n.md')).toBe('hello');
+
+    const again = await s.signIn('proton');
+    expect(again!.id).toBe(drive.id);
+    await expect(
+      s.addDrive(again!.id, { remoteFolder: '', createRootFolder: true, rootFolderName: 'Elsewhere' }),
+    ).rejects.toThrow('already connected');
+    expect(await s.drives()).toEqual([drive]);
+
+    await sync();
+    expect(await local.read('n.md')).toBe('hello');
+    expect(fake.text('Documents/MarkNotes/n.md')).toBe('hello');
+    expect(other.content('n.md')).toBe('hello');
   });
 });
