@@ -1,4 +1,4 @@
-import { isInAttachments } from './attachments';
+import { ATTACHMENTS_FOLDER, isAttachmentPath, isInAttachments, MAX_ATTACHMENT_BYTES } from './attachments';
 import { newChordSequenceContent } from './chords';
 import { newNoteContent } from './frontMatter';
 import { foldCase, sha256Hex } from '@marknotes/sync';
@@ -359,6 +359,62 @@ export class NoteStore {
     const path = P.join(P.normalize(folder), fileName);
     if (await this.exists(path)) throw new Error(`"${fileName}" already exists`);
     await this.writeSyncedBytes(path, new TextEncoder().encode(content), this.clock());
+    return path;
+  }
+
+  /**
+   * Saves an imported note with a fresh id and the images it references, atomically. The note is named after
+   * `title`, or "title 2", "title 3"... when the name is taken. Returns the note's path.
+   */
+  async importNote(
+    folder: string,
+    title: string,
+    body: string,
+    images: readonly { path: string; bytes: Uint8Array }[],
+  ): Promise<string> {
+    const base = P.normalize(folder);
+    if (isInAttachments(base)) throw new Error('The attachments folder is reserved for images');
+    const snapshot = await this.backend.all();
+    if (base && !snapshot.some((n) => n.path === base && n.isFolder))
+      throw new Error(`${folder} does not exist`);
+    const taken = new Set(snapshot.map((n) => foldCase(n.path)));
+    const name = title.trim();
+    P.validateName(name);
+    const stem = P.isNote(name) ? name.substring(0, name.length - P.NOTE_EXTENSION.length) : name;
+    let path = P.join(base, stem + P.NOTE_EXTENSION);
+    for (let i = 2; taken.has(foldCase(path)); i++) path = P.join(base, `${stem} ${i}${P.NOTE_EXTENSION}`);
+    const now = this.clock();
+    const content = new TextEncoder().encode(newNoteContent() + body);
+    const puts: StoredNode[] = [
+      { path, content, isFolder: false, size: content.length, modifiedMillis: now },
+    ];
+    for (const image of images) {
+      if (
+        !isAttachmentPath(image.path) ||
+        image.bytes.length > MAX_ATTACHMENT_BYTES ||
+        P.name(image.path).split('.')[0] !== sha256Hex(image.bytes)
+      )
+        throw new Error('Invalid imported image');
+      const existing = snapshot.find((n) => foldCase(n.path) === foldCase(image.path));
+      if (existing) {
+        if (existing.isFolder || existing.path !== image.path)
+          throw new Error(`${image.path} conflicts with an existing file`);
+      } else if (!puts.some((n) => n.path === image.path)) {
+        puts.push({
+          path: image.path,
+          content: image.bytes,
+          isFolder: false,
+          size: image.bytes.length,
+          modifiedMillis: now,
+        });
+      }
+    }
+    if (puts.length > 1 && !snapshot.some((n) => n.path === ATTACHMENTS_FOLDER && n.isFolder)) {
+      if (taken.has(foldCase(ATTACHMENTS_FOLDER))) throw new Error('The attachments folder is unavailable');
+      puts.push({ path: ATTACHMENTS_FOLDER, isFolder: true, size: 0, modifiedMillis: now });
+    }
+    await this.backend.applyIfUnchanged(snapshot, puts, []);
+    this.changed();
     return path;
   }
 

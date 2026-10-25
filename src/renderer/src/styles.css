@@ -509,6 +509,33 @@ textarea:focus {
   gap: 4px;
   margin-top: 16px;
 }
+.dialog:has(.import-content) {
+  width: min(760px, 92vw);
+}
+.import-content textarea,
+.import-content input[type='text'],
+.import-content select {
+  width: 100%;
+  box-sizing: border-box;
+}
+.import-content .row {
+  margin: 10px 0;
+}
+.import-preview,
+.import-source {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 45vh;
+  overflow: auto;
+}
+.import-source {
+  margin: 0;
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
 .hunk {
   border: 1px solid var(--border);
   border-radius: 8px;

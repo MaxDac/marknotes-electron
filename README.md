@@ -28,6 +28,11 @@ All MarkNotes apps share the same drive folder and note format. Settings → Abo
 - **Images**: insert PNG, JPEG, GIF or WebP images from the toolbar, by pasting or by drag-and-drop. Images are
   downscaled to 2048 px, stored once in the root `attachments/` folder (named by their SHA-256) and synced to every
   drive. **Settings → Clean unused images** deletes images no note references.
+- **Import** text and documents as new notes: **Import…**, a dropped file or pasted content. Supports pasted or typed
+  text and HTML, `.txt`, `.md`, `.html`, Word `.docx` (with its images saved as attachments), PDF text (pdf.js, loaded
+  on first use; scanned PDFs without text are reported) and images. Before saving you review the title, the folder,
+  an **Auto-format as Markdown** switch (headings, lists, links and tables) and a preview. The conversion runs locally
+  and nothing is written until you save.
 - **Chord sequences** for guitar and bass (ported from ChordBuilder): **New chord sequence** creates a note with
   `type: chords` in its front-matter, marked 🎸 in the note list. It opens in a chord editor: build each chord on a
   fretboard (mute, open or a fret from 1 to 24 with fingers 1–4 per string; bass shows frets 9–24 with a red line at the
