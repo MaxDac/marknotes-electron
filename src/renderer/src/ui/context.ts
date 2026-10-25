@@ -4,6 +4,7 @@ import type { NoteStore } from '../../../shared/noteStore';
 import type { Settings } from '../data/db';
 import type { SyncManager, SyncState } from '../data/syncManager';
 import type { ThemeColor, ThemeMode } from './theme';
+import { recordDiagnostic } from '../data/diagnostics';
 
 export interface AppServices {
   notes: NoteStore;
@@ -44,4 +45,7 @@ export function useNotesVersion(): number {
   return version;
 }
 
-export const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+export const errorMessage = (e: unknown) => {
+  recordDiagnostic('UI_FAILED');
+  return e instanceof Error ? e.message : String(e);
+};

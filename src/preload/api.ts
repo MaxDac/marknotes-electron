@@ -1,4 +1,5 @@
 import type { DriveAccount, DriveProvider, RemoteEntry, RemoteFolder } from '../shared/types';
+import type { DiagnosticCode, DiagnosticDraft } from '../shared/diagnostics';
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -70,6 +71,11 @@ export type UpdateStatus =
 /** API exposed by the preload script as `window.marknotes`. */
 export interface MarkNotesApi {
   platform: string;
+  recordDiagnostic(code: DiagnosticCode): Promise<Result<void>>;
+  clearDiagnostics(): Promise<Result<void>>;
+  exportDiagnostics(): Promise<Result<void>>;
+  diagnosticsDraft(): Promise<Result<DiagnosticDraft>>;
+  openDiagnosticsDraft(draft: DiagnosticDraft, consent: boolean): Promise<Result<void>>;
   deviceId(): Promise<Result<string>>;
   /** How credentials are protected on this device (see `SecureStorageStatus`). */
   secureStorage(): Promise<Result<SecureStorageStatus>>;
