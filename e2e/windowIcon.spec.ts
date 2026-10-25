@@ -66,7 +66,9 @@ test('Windows app windows use the bundled MarkNotes icon, including after recrea
   test.skip(process.platform !== 'win32', 'Native Windows window icons');
   // electron-vite emits `?asset` imports next to the main bundle chunks.
   const main = join(process.cwd(), 'out', 'main');
-  const icons = readdirSync(main, { recursive: true, encoding: 'utf8' }).filter((name) => name.endsWith('.ico'));
+  const icons = readdirSync(main, { recursive: true, encoding: 'utf8' }).filter((name) =>
+    name.endsWith('.ico'),
+  );
   expect(icons).toHaveLength(1);
   const iconPath = join(main, icons[0]);
   expect(readFileSync(iconPath)).toEqual(readFileSync(join(process.cwd(), 'build', 'icon.ico')));
