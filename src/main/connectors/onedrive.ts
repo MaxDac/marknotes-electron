@@ -126,7 +126,7 @@ export class GraphClient {
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!response.ok) {
       if (response.status === 401) {
-        throw new RemoteUnavailableError('OneDrive session expired, please sign in again');
+        throw new RemoteUnavailableError('OneDrive session expired, reconnect this drive in Settings');
       }
       throw new GraphError(response.status, GraphClient.errorMessage(response.status, bytes));
     }
@@ -606,8 +606,8 @@ const ERROR_PAGE =
   '<body style="font-family:system-ui;padding:2rem"><h2>MarkNotes</h2>' +
   '<p>Sign-in was cancelled or failed. You can close this window.</p></body></html>';
 
-const EXPIRED = 'OneDrive sign-in expired, remove and add the drive again';
-const SIGN_IN_AGAIN = 'Sign in to OneDrive again';
+const EXPIRED = 'OneDrive sign-in expired, reconnect this drive in Settings';
+const SIGN_IN_AGAIN = 'OneDrive sign-in expired, reconnect this drive in Settings';
 
 /**
  * OneDrive (personal and work/school accounts) through Microsoft Graph. Tokens are managed by MSAL
@@ -619,6 +619,7 @@ export class OneDriveConnector implements DriveConnector {
 
   private readonly fetchFn: FetchFn;
   private readonly apps = new Map<string, MsalApp>();
+  private readonly bindings = new Map<string, Binding>();
   private readonly stores = new Map<string, { folder: string; store: OneDriveDriveStore }>();
 
   constructor(private readonly deps: OneDriveConnectorDeps) {
@@ -656,11 +657,40 @@ export class OneDriveConnector implements DriveConnector {
     const account = result.account;
     if (!account) throw new Error('OneDrive sign-in returned no account');
     const id = `onedrive-${crypto.randomUUID()}`;
-    binding.accountId = id;
     binding.homeAccountId = account.homeAccountId;
-    await this.save(binding, app.getTokenCache().serialize());
+    if (!binding.homeAccountId) throw new Error('OneDrive sign-in returned no account ID');
+    if (signal?.aborted) return null;
+    await this.save({ ...binding, accountId: id }, app.getTokenCache().serialize());
+    binding.accountId = id;
     this.apps.set(id, app);
-    return { id, provider: this.provider, label: account.username || account.name || 'OneDrive' };
+    this.bindings.set(id, binding);
+    return {
+      id,
+      provider: this.provider,
+      label: account.username || account.name || 'OneDrive',
+      providerAccountId: account.homeAccountId,
+    };
+  }
+
+  async replaceCredentials(account: DriveAccount, signedIn: SignedInAccount): Promise<void> {
+    const fresh = await this.load(signedIn.id);
+    const old = await this.load(account.id);
+    const expected = account.providerAccountId || old?.homeAccountId;
+    if (!expected) throw new Error('Cannot verify this legacy OneDrive account safely');
+    if (!fresh || fresh.homeAccountId !== expected) {
+      throw new Error('Sign in to the same OneDrive account to reconnect');
+    }
+    const stagedBinding = this.bindings.get(signedIn.id);
+    if (stagedBinding) stagedBinding.accountId = null;
+    this.bindings.delete(signedIn.id);
+    this.apps.delete(signedIn.id);
+    await this.deps.vault.set(account.id, JSON.stringify(fresh));
+    await this.deps.vault.delete(signedIn.id);
+    const binding = this.bindings.get(account.id);
+    if (binding) binding.accountId = null;
+    this.bindings.delete(account.id);
+    this.apps.delete(account.id);
+    this.stores.delete(account.id);
   }
 
   async folderBrowser(accountId: string): Promise<RemoteFolderBrowser> {
@@ -681,6 +711,9 @@ export class OneDriveConnector implements DriveConnector {
     const credential = await this.load(accountId);
     const app = this.apps.get(accountId);
     this.apps.delete(accountId);
+    const binding = this.bindings.get(accountId);
+    if (binding) binding.accountId = null;
+    this.bindings.delete(accountId);
     await this.deps.vault.delete(accountId);
     if (!credential || !app) return;
     try {
@@ -714,7 +747,9 @@ export class OneDriveConnector implements DriveConnector {
   private appFor(accountId: string, homeAccountId: string): MsalApp {
     let app = this.apps.get(accountId);
     if (!app) {
-      app = this.createApp({ accountId, homeAccountId });
+      const binding = { accountId, homeAccountId };
+      app = this.createApp(binding);
+      this.bindings.set(accountId, binding);
       this.apps.set(accountId, app);
     }
     return app;

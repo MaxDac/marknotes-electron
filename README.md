@@ -68,6 +68,11 @@ All MarkNotes apps share the same drive folder and note format. Settings → Abo
 - **Proton login**: SRP password login with TOTP. CAPTCHA/human verification, two-password mode and FIDO2-only
   accounts are not supported.
 - **Dropbox / OneDrive login**: OAuth 2 PKCE (Dropbox) and MSAL (OneDrive) in the system browser, with a loopback redirect.
+- **Settings → Reconnect** signs in again to the same Dropbox, OneDrive or Proton account when its sign-in expired or
+  was revoked, without changing the drive's folder, sync records, base copies or pending conflicts. A different
+  account is rejected (checked by the provider's account ID, not the email). Dropbox drives added by older versions
+  record their account ID the next time they sync; one whose sign-in was revoked before that cannot be verified and
+  must be disconnected and added again.
 - Tokens are encrypted with Electron `safeStorage` (OS keychain). See [Security and privacy](#security-and-privacy).
 
 The file format shared with the Android and web apps is specified in [marknotes-spec](https://github.com/MaxDac/marknotes-spec)

@@ -14,8 +14,8 @@ import type {
 } from './sdk';
 import { sessionToJson, type ProtonSession } from './session';
 
-export const LOGIN_AGAIN_MESSAGE = 'Log in to Proton Drive again';
-export const SESSION_EXPIRED_MESSAGE = 'Proton session expired, please log in again';
+export const LOGIN_AGAIN_MESSAGE = 'Proton Drive sign-in expired, reconnect this drive in Settings';
+export const SESSION_EXPIRED_MESSAGE = 'Proton session expired, reconnect this drive in Settings';
 
 /**
  * Live access to the stored session of one account. Refreshes tokens on 401 (once for concurrent callers)
@@ -23,6 +23,7 @@ export const SESSION_EXPIRED_MESSAGE = 'Proton session expired, please log in ag
  */
 export class ProtonSessionHolder {
   private refreshing: Promise<ProtonSession> | null = null;
+  private detached = false;
 
   constructor(
     readonly accountId: string,
@@ -54,7 +55,12 @@ export class ProtonSessionHolder {
 
   async invalidate(): Promise<void> {
     this.session = null;
-    await this.vault.delete(this.accountId);
+    if (!this.detached) await this.vault.delete(this.accountId);
+  }
+
+  detach() {
+    this.detached = true;
+    this.session = null;
   }
 
   private async doRefresh(session: ProtonSession): Promise<ProtonSession> {
@@ -71,8 +77,10 @@ export class ProtonSessionHolder {
       }
       throw e;
     }
-    this.session = fresh;
-    await this.vault.set(this.accountId, sessionToJson(fresh));
+    if (!this.detached) {
+      this.session = fresh;
+      await this.vault.set(this.accountId, sessionToJson(fresh));
+    }
     return fresh;
   }
 }

@@ -215,6 +215,13 @@ export class SyncManager {
     await this.syncNow();
   }
 
+  reconnect(driveId: string, accountId: string): Promise<void> {
+    return this.locked(async () => {
+      await unwrap(api().reconnect(driveId, accountId));
+      await this.refreshDrives();
+    });
+  }
+
   /**
    * Disconnects a drive. Nothing is deleted from the drive. Local notes are kept unless `deleteLocalData` is set
    * and no other drive is connected (with another drive, the deletion would be synced to it).

@@ -44,6 +44,7 @@ const api: MarkNotesApi = {
   protonCancel: call('drives:protonCancel') as MarkNotesApi['protonCancel'],
   listFolders: call('drives:listFolders') as MarkNotesApi['listFolders'],
   addDrive: call('drives:add') as MarkNotesApi['addDrive'],
+  reconnect: call('drives:reconnect') as MarkNotesApi['reconnect'],
   discardSignIn: call('drives:discardSignIn') as MarkNotesApi['discardSignIn'],
   removeDrive: call('drives:remove') as MarkNotesApi['removeDrive'],
   remote: call('remote:op') as MarkNotesApi['remote'],

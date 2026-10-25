@@ -5,6 +5,7 @@ import {
   alreadyConnectedMessage,
   DEFAULT_ROOT_FOLDER,
   PROVIDER_NAMES,
+  type DriveAccount,
   type DriveProvider,
   type RemoteFolder,
 } from '../../../shared/types';
@@ -18,26 +19,37 @@ type Step =
   | { kind: 'protonLogin' }
   | { kind: 'folder'; account: SignedIn; browsable: boolean };
 
-export function AddDrive(props: { onDone(): void }) {
+export function AddDrive(props: { onDone(): void; reconnect?: DriveAccount }) {
   const { sync } = useApp();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [step, setStep] = useState<Step>({ kind: 'choose' });
   const [error, setError] = useState<string | null>(null);
   const signedIn = useRef<SignedIn | null>(null);
+  const active = useRef(true);
+  const [committing, setCommitting] = useState(false);
 
   useEffect(() => {
+    active.current = true;
     unwrap(api().providers()).then(setProviders, (e) => setError(errorMessage(e)));
+    return () => {
+      active.current = false;
+    };
   }, []);
 
   /** Leaves the wizard; an account that signed in but was not added is signed out again. */
   const leave = () => {
+    active.current = false;
     if (step.kind === 'signingIn') void api().cancelSignIn();
     if (signedIn.current) void api().discardSignIn(signedIn.current.id);
     props.onDone();
   };
 
-  const signedInAs = (account: SignedIn) => {
-    if (sync.current.drives.some((d) => d.account.id === account.id)) {
+  const signedInAs = async (account: SignedIn) => {
+    if (!active.current) {
+      await unwrap(api().discardSignIn(account.id));
+      return;
+    }
+    if (!props.reconnect && sync.current.drives.some((d) => d.account.id === account.id)) {
       // Re-adding would reuse the drive's sync records with a new folder; the main process refuses it too.
       void api().discardSignIn(account.id);
       setError(alreadyConnectedMessage(account.label));
@@ -45,6 +57,23 @@ export function AddDrive(props: { onDone(): void }) {
       return;
     }
     signedIn.current = account;
+    if (props.reconnect) {
+      setCommitting(true);
+      try {
+        await sync.reconnect(props.reconnect.id, account.id);
+        signedIn.current = null;
+        props.onDone();
+        void sync.syncNow();
+      } catch (e) {
+        setError(errorMessage(e));
+        await unwrap(api().discardSignIn(account.id));
+        signedIn.current = null;
+        setStep({ kind: 'choose' });
+      } finally {
+        setCommitting(false);
+      }
+      return;
+    }
     const info = providers.find((p) => p.provider === account.provider);
     setStep({ kind: 'folder', account, browsable: info?.browsable ?? false });
   };
@@ -58,7 +87,7 @@ export function AddDrive(props: { onDone(): void }) {
     setStep({ kind: 'signingIn', provider });
     try {
       const account = await unwrap(api().signIn(provider));
-      if (account) signedInAs(account);
+      if (account) await signedInAs(account);
       else setStep({ kind: 'choose' });
     } catch (e) {
       setError(errorMessage(e));
@@ -69,10 +98,16 @@ export function AddDrive(props: { onDone(): void }) {
   return (
     <>
       <div className="topbar">
-        <button className="icon" aria-label="Back" onClick={leave}>
+        <button className="icon" aria-label="Back" disabled={committing} onClick={leave}>
           ←
         </button>
-        <h1>{step.kind === 'protonLogin' ? 'Proton Drive login' : 'Add drive'}</h1>
+        <h1>
+          {props.reconnect
+            ? 'Reconnect drive'
+            : step.kind === 'protonLogin'
+              ? 'Proton Drive login'
+              : 'Add drive'}
+        </h1>
       </div>
       <div className="page">
         <div className="page-inner">
@@ -80,20 +115,28 @@ export function AddDrive(props: { onDone(): void }) {
           {step.kind === 'choose' && (
             <>
               <StorageWarning />
-              <p>
-                Choose where to sync your notes. You can connect several drives: each one keeps a full copy.
-              </p>
-              {providers.map((p) => (
-                <button
-                  key={p.provider}
-                  className="choice"
-                  disabled={p.unavailableReason !== null}
-                  onClick={() => void choose(p.provider)}
-                >
-                  <span className="title">{p.name}</span>
-                  {p.unavailableReason && <span className="small">{p.unavailableReason}</span>}
-                </button>
-              ))}
+              {props.reconnect ? (
+                <p>
+                  Sign in again as {props.reconnect.label}. Your sync folder and local sync data will be kept.
+                </p>
+              ) : (
+                <p>
+                  Choose where to sync your notes. You can connect several drives: each one keeps a full copy.
+                </p>
+              )}
+              {providers
+                .filter((p) => !props.reconnect || p.provider === props.reconnect.provider)
+                .map((p) => (
+                  <button
+                    key={p.provider}
+                    className="choice"
+                    disabled={committing || p.unavailableReason !== null}
+                    onClick={() => void choose(p.provider)}
+                  >
+                    <span className="title">{p.name}</span>
+                    {p.unavailableReason && <span className="small">{p.unavailableReason}</span>}
+                  </button>
+                ))}
             </>
           )}
           {step.kind === 'signingIn' && (
@@ -101,6 +144,7 @@ export function AddDrive(props: { onDone(): void }) {
               <p>Signing in to {PROVIDER_NAMES[step.provider]}…</p>
               <p className="small">Complete the sign-in in your browser, then come back here.</p>
               <button
+                disabled={committing}
                 onClick={() => {
                   void api().cancelSignIn();
                   setStep({ kind: 'choose' });
@@ -110,7 +154,13 @@ export function AddDrive(props: { onDone(): void }) {
               </button>
             </>
           )}
-          {step.kind === 'protonLogin' && <ProtonLogin onSignedIn={signedInAs} />}
+          {step.kind === 'protonLogin' && (
+            <ProtonLogin
+              staged={!!props.reconnect}
+              initialUsername={props.reconnect?.label}
+              onSignedIn={signedInAs}
+            />
+          )}
           {step.kind === 'folder' && (
             <FolderStep
               account={step.account}
@@ -129,8 +179,12 @@ export function AddDrive(props: { onDone(): void }) {
   );
 }
 
-function ProtonLogin(props: { onSignedIn(account: SignedIn): void }) {
-  const [username, setUsername] = useState('');
+function ProtonLogin(props: {
+  staged?: boolean;
+  initialUsername?: string;
+  onSignedIn(account: SignedIn): Promise<void>;
+}) {
+  const [username, setUsername] = useState(props.initialUsername ?? '');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -138,13 +192,15 @@ function ProtonLogin(props: { onSignedIn(account: SignedIn): void }) {
   const [error, setError] = useState<string | null>(null);
   /** A login waiting for its two-factor code; abandoned (and its password dropped) when the form goes away. */
   const pending = useRef<string | null>(null);
+  const active = useRef(true);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
       if (pending.current) void api().protonCancel(pending.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   const submit = async () => {
     setBusy(true);
@@ -153,12 +209,16 @@ function ProtonLogin(props: { onSignedIn(account: SignedIn): void }) {
       if (pendingId) {
         const account = await unwrap(api().protonTwoFactor(pendingId, code.trim()));
         pending.current = null;
-        props.onSignedIn(account);
+        await props.onSignedIn(account);
       } else {
-        const result = await unwrap(api().protonLogin(username.trim(), password));
+        const result = await unwrap(api().protonLogin(username.trim(), password, props.staged));
         setPassword('');
-        if (result.kind === 'signedIn') props.onSignedIn(result.account);
+        if (result.kind === 'signedIn') await props.onSignedIn(result.account);
         else {
+          if (!active.current) {
+            await unwrap(api().protonCancel(result.pendingId));
+            return;
+          }
           pending.current = result.pendingId;
           setPendingId(result.pendingId);
         }

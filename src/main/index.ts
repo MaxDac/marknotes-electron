@@ -227,11 +227,12 @@ function registerIpc(
   handle('drives:list', () => service.drives());
   handle('drives:signIn', (provider: DriveProvider) => service.signIn(provider));
   handle('drives:cancelSignIn', () => service.cancelSignIn());
-  handle('drives:protonLogin', (u: string, p: string) => service.protonLogin(u, p));
+  handle('drives:protonLogin', (u: string, p: string, staged?: boolean) => service.protonLogin(u, p, staged));
   handle('drives:protonTwoFactor', (id: string, code: string) => service.protonTwoFactor(id, code));
   handle('drives:protonCancel', (id: string) => service.protonCancel(id));
   handle('drives:listFolders', (id: string, path: string) => service.listFolders(id, path));
   handle('drives:add', (id: string, options) => service.addDrive(id, options));
+  handle('drives:reconnect', (id: string, accountId: string) => service.reconnect(id, accountId));
   handle('drives:discardSignIn', (id: string) => service.discardSignIn(id));
   handle('drives:remove', (id: string) => service.removeDrive(id));
   handle('remote:op', (id: string, op: RemoteOp) => service.remote(id, op));

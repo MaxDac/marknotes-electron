@@ -424,6 +424,84 @@ describe('DropboxConnector', () => {
     rootFolderName: 'MarkNotes',
   });
 
+  it('replaces the real session/store after identity-checked reconnect and restores it after restart', async () => {
+    const api = new FakeDropbox();
+    const vault = new MemoryVault();
+    const old = JSON.stringify({
+      accountId: 'dbid:1',
+      refreshToken: 'revoked',
+      accessToken: 'old',
+      expiresAt: 0,
+    });
+    await vault.set('original', old);
+    await vault.set(
+      'staged',
+      JSON.stringify({
+        accountId: 'dbid:1',
+        refreshToken: 'new-refresh',
+        accessToken: 'new',
+        expiresAt: Date.now() + 3600_000,
+      }),
+    );
+    api.on('oauth2/token', () => json({ error: 'invalid_grant' }, 400));
+    api.on('files/list_folder', () => json({ entries: [], cursor: 'c', has_more: false }));
+    const deps = { appKey: 'k', vault, fetch: api.fetch, openExternal: async () => {} };
+    const c = new DropboxConnector(deps);
+    const drive = account('original');
+    const store = await c.store(drive);
+    await expect(store.snapshot()).rejects.toThrow(RemoteUnavailableError);
+    await c.replaceCredentials(drive, { id: 'staged', provider: 'dropbox', label: 'changed email' });
+    const fresh = await c.store(drive);
+    expect(fresh).not.toBe(store);
+    expect(await fresh.snapshot()).toEqual([]);
+    expect(api.calls('files/list_folder').at(-1)!.headers.authorization).toBe('Bearer new');
+    await (await new DropboxConnector(deps).store(drive)).snapshot();
+    expect(api.calls('files/list_folder').at(-1)!.headers.authorization).toBe('Bearer new');
+    expect(vault.items.has('staged')).toBe(false);
+    expect(JSON.parse(vault.items.get('original')!).accountId).toBe('dbid:1');
+  });
+
+  it('rejects a different immutable identity even with the same email and refuses unverifiable legacy credentials', async () => {
+    const api = new FakeDropbox();
+    const vault = new MemoryVault();
+    const raw = JSON.stringify({ refreshToken: 'revoked', accessToken: 'old', expiresAt: 0 });
+    await vault.set('original', raw);
+    await vault.set(
+      'staged',
+      JSON.stringify({
+        accountId: 'other',
+        refreshToken: 'new',
+        accessToken: 'new',
+        expiresAt: Date.now() + 3600_000,
+      }),
+    );
+    const c = new DropboxConnector({ appKey: 'k', vault, fetch: api.fetch, openExternal: async () => {} });
+    await expect(
+      c.replaceCredentials(
+        { ...account('original'), providerAccountId: 'dbid:1' },
+        { id: 'staged', provider: 'dropbox', label: 'me' },
+      ),
+    ).rejects.toThrow('same Dropbox account');
+    expect(vault.items.get('original')).toBe(raw);
+    api.on('oauth2/token', () => json({ error: 'invalid_grant' }, 400));
+    await expect(
+      c.replaceCredentials(account('original'), { id: 'staged', provider: 'dropbox', label: 'me' }),
+    ).rejects.toThrow('older MarkNotes version');
+    expect(vault.items.get('original')).toBe(raw);
+    // A legacy session that still works can attest the identity without email matching.
+    await vault.set(
+      'legacy',
+      JSON.stringify({ refreshToken: 'r', accessToken: 'valid', expiresAt: Date.now() + 3600_000 }),
+    );
+    api.on('users/get_current_account', () => json({ account_id: 'other' }));
+    await c.replaceCredentials(account('legacy'), {
+      id: 'staged',
+      provider: 'dropbox',
+      label: 'different email',
+    });
+    expect(JSON.parse(vault.items.get('legacy')!).accountId).toBe('other');
+  });
+
   it('is unavailable without an app key', () => {
     const connector = new DropboxConnector({
       appKey: '',
@@ -454,7 +532,7 @@ describe('DropboxConnector', () => {
       }),
     );
     api.on('users/get_current_account', () =>
-      json({ email: 'me@example.com', name: { display_name: 'Me' } }),
+      json({ account_id: 'dbid:1', email: 'me@example.com', name: { display_name: 'Me' } }),
     );
     const connector = new DropboxConnector({
       appKey: 'app-key',
@@ -507,7 +585,9 @@ describe('DropboxConnector', () => {
   it('falls back to the display name when there is no email', async () => {
     const api = new FakeDropbox();
     api.on('oauth2/token', () => json({ access_token: 'at', expires_in: 14400, refresh_token: 'rt' }));
-    api.on('users/get_current_account', () => json({ email: '', name: { display_name: 'Me' } }));
+    api.on('users/get_current_account', () =>
+      json({ account_id: 'dbid:1', email: '', name: { display_name: 'Me' } }),
+    );
     const connector = new DropboxConnector({
       appKey: 'k',
       vault: new MemoryVault(),
@@ -591,6 +671,29 @@ describe('DropboxConnector', () => {
       refreshToken: 'rt',
       accessToken: 'fresh',
     });
+  });
+
+  it('records the account id of a credential saved before it was tracked', async () => {
+    const api = new FakeDropbox();
+    const vault = new MemoryVault();
+    await vault.set(
+      'dropbox-1',
+      JSON.stringify({ refreshToken: 'rt', accessToken: 'at', expiresAt: Date.now() + 3600_000 }),
+    );
+    api.on('users/get_current_account', () => json({ account_id: 'dbid:legacy' }));
+    const connector = new DropboxConnector({
+      appKey: 'k',
+      vault,
+      fetch: api.fetch,
+      openExternal: async () => {},
+    });
+    await connector.store(account('dropbox-1'));
+    expect(JSON.parse(vault.items.get('dropbox-1')!)).toMatchObject({
+      refreshToken: 'rt',
+      accountId: 'dbid:legacy',
+    });
+    await connector.store(account('dropbox-1'));
+    expect(api.calls('users/get_current_account')).toHaveLength(1);
   });
 
   it('reports a revoked refresh token as RemoteUnavailableError', async () => {

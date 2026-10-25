@@ -12,7 +12,7 @@ import type { PrivateKey, ProtonDriveAccount, ProtonDriveAccountAddress, PublicK
 import type { ProtonSession } from './session';
 
 export const NO_KEY_PASSPHRASES_MESSAGE =
-  'The Proton session has no key passphrases. Sign out and sign in again to sync with Proton Drive.';
+  'The Proton session has no key passphrases. Reconnect this drive in Settings to sync with Proton Drive.';
 
 export interface ProtonKeysApi {
   getJson(path: string): Promise<Record<string, unknown>>;
@@ -164,7 +164,7 @@ export class ProtonAccount implements ProtonDriveAccount {
     }
     if (passphrase === null) {
       throw new RemoteUnavailableError(
-        `Couldn't get the passphrase of the Proton address key ${key.id}. Sign out and sign in again.`,
+        `Couldn't get the passphrase of the Proton address key ${key.id}. Reconnect this drive in Settings.`,
       );
     }
     return passphrase;
