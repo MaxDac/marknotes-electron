@@ -172,8 +172,13 @@ export function App() {
         chordSequences,
         syncOnReconnect,
         async setSyncOnReconnect(enabled) {
-          await loaded.settings.set(RECONNECT_SETTING, enabled);
           setSyncOnReconnectState(enabled);
+          try {
+            await loaded.settings.set(RECONNECT_SETTING, enabled);
+          } catch (e) {
+            setSyncOnReconnectState(!enabled);
+            throw e;
+          }
         },
         setChordSequences(enabled) {
           setChordSequencesState(enabled);
