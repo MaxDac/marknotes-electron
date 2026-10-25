@@ -13,6 +13,7 @@ import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import iconPath from '../../build/icon.png?asset';
+import windowsIconPath from '../../build/icon.ico?asset';
 import type { RemoteOp } from '../preload/api';
 import { diagnosticEnvironment, type DiagnosticCode, type DiagnosticDraft } from '../shared/diagnostics';
 import type { DriveProvider } from '../shared/types';
@@ -258,8 +259,12 @@ function createWindow() {
     minHeight: 400,
     show: false,
     title: 'MarkNotes',
-    // Windows and macOS take the icon from the executable; Linux needs it on the window.
-    ...(process.platform === 'linux' ? { icon: iconPath } : {}),
+    // Set runtime icons explicitly; macOS uses its app bundle icon.
+    ...(process.platform === 'win32'
+      ? { icon: windowsIconPath }
+      : process.platform === 'linux'
+        ? { icon: iconPath }
+        : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -325,6 +330,7 @@ if (!e2e && !app.requestSingleInstanceLock()) {
     }
   });
   void app.whenReady().then(async () => {
+    if (process.platform === 'win32') app.setAppUserModelId('io.github.maxdac.marknotes');
     denyPermissions();
     const updater = createUpdater();
     const { service, storage, keys } = await createService();
