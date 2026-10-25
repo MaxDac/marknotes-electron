@@ -35,6 +35,7 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
   const [wipeError, setWipeError] = useState<string | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [reconnectError, setReconnectError] = useState<string | null>(null);
+  const [savingReconnect, setSavingReconnect] = useState(false);
   const lastDrive = state.drives.length === 1;
 
   return (
@@ -115,11 +116,15 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
               role="switch"
               aria-label="Sync when reconnected"
               checked={syncOnReconnect}
+              disabled={savingReconnect}
               onChange={(e) => {
                 setReconnectError(null);
-                setSyncOnReconnect(e.target.checked).catch((error: unknown) =>
-                  setReconnectError(`Could not save the setting: ${errorMessage(error)}`),
-                );
+                setSavingReconnect(true);
+                setSyncOnReconnect(e.target.checked)
+                  .catch((error: unknown) =>
+                    setReconnectError(`Could not save the setting: ${errorMessage(error)}`),
+                  )
+                  .finally(() => setSavingReconnect(false));
               }}
             />
             Sync when reconnected

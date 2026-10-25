@@ -110,11 +110,14 @@ test('reconnect sync is off by default and its device setting survives restart',
     await expect(toggle).not.toBeChecked();
     await toggle.check();
     await expect(toggle).toBeChecked();
+    // Enabled again once the setting is saved.
+    await expect(toggle).toBeEnabled();
     await app.close();
     ({ app, page } = await launch(userData));
     await page.getByRole('button', { name: 'Settings' }).click();
     await expect(page.getByRole('switch', { name: 'Sync when reconnected' })).toBeChecked();
     await page.getByRole('switch', { name: 'Sync when reconnected' }).uncheck();
+    await expect(page.getByRole('switch', { name: 'Sync when reconnected' })).toBeEnabled();
     await app.close();
     ({ app, page } = await launch(userData));
     await page.getByRole('button', { name: 'Settings' }).click();
