@@ -8,6 +8,8 @@ import { openNoteDecision } from '../data/chordSequences';
 import { ConfirmDialog, Dialog, NameDialog } from './Dialog';
 import { NoteEditor } from './ChordEditor';
 import { errorMessage, useApp, useNotesVersion, useSyncState } from './context';
+import { ImportDialog, type ImportRequest } from './ImportDialog';
+import { kindOf } from '../../../shared/importing/prepareImport';
 
 type DialogState =
   | { kind: 'newNote' }
@@ -16,7 +18,8 @@ type DialogState =
   | { kind: 'rename'; entry: NoteEntry }
   | { kind: 'delete'; entry: NoteEntry }
   | { kind: 'move'; entry: NoteEntry }
-  | { kind: 'enableChords'; path: string };
+  | { kind: 'enableChords'; path: string }
+  | { kind: 'import'; request: ImportRequest | null };
 
 /** Folders sorted as a tree: case-insensitive, segment by segment. */
 const treeOrder = (a: string, b: string) => {
@@ -120,7 +123,25 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
   );
 
   return (
-    <div className="app" style={props.hidden ? { display: 'none' } : undefined}>
+    <div
+      className="app"
+      style={props.hidden ? { display: 'none' } : undefined}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes('Files')) e.preventDefault();
+      }}
+      onDropCapture={(e) => {
+        // An open dialog handles its own drops (the import dialog imports them).
+        if (dialog !== null) return;
+        const files = [...e.dataTransfer.files];
+        if (files.length === 0) return;
+        const images = files.every((f) => kindOf(f.type, f.name) === 'image');
+        // Images dropped on the editor are inserted into the open note.
+        if (images && (e.target as HTMLElement).closest('.cm-editor')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setDialog({ kind: 'import', request: { files, clipboard: null } });
+      }}
+    >
       <div className="topbar">
         <h1>
           <img src={logo} alt="" className="logo" />
@@ -135,6 +156,9 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
           </button>
         )}
         <button onClick={() => setDialog({ kind: 'newFolder' })}>New folder</button>
+        <button data-testid="import" onClick={() => setDialog({ kind: 'import', request: null })}>
+          Import…
+        </button>
         <div className="spacer" />
         {syncState.conflicts.length > 0 && (
           <button className="danger" onClick={() => props.navigate('conflicts')}>
@@ -344,6 +368,18 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
           danger
           onClose={() => setDialog(null)}
           onConfirm={() => void run(() => notes.delete(dialog.entry.path))}
+        />
+      )}
+      {dialog?.kind === 'import' && (
+        <ImportDialog
+          request={dialog.request}
+          folder={folder}
+          folders={folders}
+          onClose={() => setDialog(null)}
+          onImported={(path) => {
+            setFolder(P.parent(path));
+            void requestOpen(path);
+          }}
         />
       )}
       {dialog?.kind === 'move' && (

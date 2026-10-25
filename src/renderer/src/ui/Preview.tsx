@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { typeForPath } from '../../../shared/attachments';
 import type { IndexedNote } from '../../../shared/noteLinks';
+import type { NoteStore } from '../../../shared/noteStore';
 import { api } from '../data/api';
 import { attachmentUrl } from '../data/images';
 import { useApp, useNotesVersion } from './context';
@@ -12,8 +13,11 @@ export function Preview(props: {
   /** Indexed notes, used to style broken note links; null while loading. */
   index: IndexedNote[] | null;
   onNoteLink(id: string): void;
+  /** Where attachments are read from (default: the notes), e.g. the images staged by an import. */
+  attachmentStore?: NoteStore;
 }) {
-  const { notes } = useApp();
+  const { notes: appNotes } = useApp();
+  const notes = props.attachmentStore ?? appNotes;
   const version = useNotesVersion();
   const host = useRef<HTMLDivElement>(null);
   const html = useMemo(() => renderMarkdown(props.text), [props.text]);
