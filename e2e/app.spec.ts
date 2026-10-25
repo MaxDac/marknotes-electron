@@ -39,7 +39,7 @@ test('settings link to the other MarkNotes apps in the browser', async ({ launch
   const links = page.getByTestId('other-apps').getByRole('button');
   await expect(links).toHaveText([
     'MarkNotes for Android (F-Droid)',
-    'MarkNotes Pro for Android (GitHub Releases)',
+    'MarkNotes Plus for Android (GitHub Releases)',
     'MarkNotes Web',
   ]);
   await page.getByRole('button', { name: 'MarkNotes Web' }).click();
