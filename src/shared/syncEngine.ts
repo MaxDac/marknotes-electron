@@ -186,7 +186,7 @@ class SyncRun {
       remote: remoteEntries,
       records: await metadata.all(),
       manifest,
-      remoteFolderDeletion: remote.remoteFolderDeletion ?? 'atomicEmptyOnly',
+      remoteFolderDeletion: remote.remoteFolderDeletion,
     });
     for (const action of actions) {
       if (
