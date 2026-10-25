@@ -126,6 +126,7 @@ textarea:focus {
 .marknotes-guide.driver-popover {
   background: var(--surface);
   color: var(--text);
+  width: 340px;
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 24px);
   overflow: auto;

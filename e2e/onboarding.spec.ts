@@ -14,7 +14,12 @@ async function launch(userData: string) {
 }
 
 async function next(page: Page, count: number) {
-  for (let i = 0; i < count; i++) await page.getByRole('button', { name: 'Next', exact: true }).click();
+  for (let i = 0; i < count; i++) {
+    const title = page.locator('.driver-popover-title');
+    const before = await title.innerText();
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(title).not.toHaveText(before);
+  }
 }
 
 async function replay(page: Page) {
@@ -231,37 +236,49 @@ test('lock interruption does not handle the guide and a full reset clears it', a
   }
 });
 
-test('reparented popovers stay beside their highlighted targets', async () => {
-  const profile = mkdtempSync(join(tmpdir(), 'marknotes-guide-position-'));
-  const { app, page } = await launch(profile);
-  try {
-    const targets = ['new-note', 'folders', 'import', 'demo', 'settings', 'help'];
-    for (const target of targets) {
-      await next(page, 1);
-      await expect
-        .poll(() =>
-          page.locator('.marknotes-guide').evaluate((popover, anchor) => {
-            const element = document.querySelector(`[data-tour="${anchor}"]`);
-            if (!element || !(popover instanceof HTMLElement)) return false;
-            const a = element.getBoundingClientRect();
-            const p = popover.getBoundingClientRect();
-            const horizontal = p.left <= a.right && p.right >= a.left;
-            const vertical = p.top <= a.bottom && p.bottom >= a.top;
-            const beside =
-              (horizontal && Math.min(Math.abs(p.bottom - a.top), Math.abs(p.top - a.bottom)) <= 32) ||
-              (vertical && Math.min(Math.abs(p.right - a.left), Math.abs(p.left - a.right)) <= 32);
-            return popover.offsetParent === null && beside;
-          }, target),
-        )
-        .toBe(true);
+for (const width of [1200, 960]) {
+  test(`reparented popovers stay beside their highlighted targets at ${width}px`, async () => {
+    const profile = mkdtempSync(join(tmpdir(), 'marknotes-guide-position-'));
+    const { app, page } = await launch(profile);
+    try {
+      await app.evaluate(
+        ({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setSize(width, 800),
+        width,
+      );
+      const targets = ['new-note', 'folders', 'import', 'demo', 'settings', 'help'];
+      for (const target of targets) {
+        await next(page, 1);
+        await expect
+          .poll(() =>
+            page.locator('.marknotes-guide').evaluate((popover, anchor) => {
+              const element = document.querySelector(`[data-tour="${anchor}"]`);
+              if (!element || !(popover instanceof HTMLElement)) return false;
+              const a = element.getBoundingClientRect();
+              const p = popover.getBoundingClientRect();
+              const horizontal = p.left <= a.right && p.right >= a.left;
+              const vertical = p.top <= a.bottom && p.bottom >= a.top;
+              const beside =
+                (horizontal && Math.min(Math.abs(p.bottom - a.top), Math.abs(p.top - a.bottom)) <= 32) ||
+                (vertical && Math.min(Math.abs(p.right - a.left), Math.abs(p.left - a.right)) <= 32);
+              return {
+                anchor,
+                fixed: getComputedStyle(popover).position === 'fixed',
+                beside,
+                target: a.toJSON(),
+                popover: p.toJSON(),
+              };
+            }, target),
+          )
+          .toMatchObject({ fixed: true, beside: true });
+      }
+      await page.getByRole('button', { name: 'Finish', exact: true }).click();
+      await expect(page.locator('.driver-popover')).toHaveCount(0);
+    } finally {
+      await app.close();
+      rmSync(profile, { recursive: true, force: true });
     }
-    await page.getByRole('button', { name: 'Finish', exact: true }).click();
-    await expect(page.locator('.driver-popover')).toHaveCount(0);
-  } finally {
-    await app.close();
-    rmSync(profile, { recursive: true, force: true });
-  }
-});
+  });
+}
 
 test('keyboard focus stays in guide/demo with reduced motion in a tiny window', async () => {
   const profile = mkdtempSync(join(tmpdir(), 'marknotes-guide-small-'));
