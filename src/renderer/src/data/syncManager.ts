@@ -7,6 +7,7 @@ import type { DriveAccount } from '../../../shared/types';
 import type { ProviderInfo } from '../../../preload/api';
 import { api, IpcRemoteDriveStore, unwrap } from './api';
 import { deleteLocalData, IdbBaseContentStore, IdbSyncMetadataStore, type Db, type Settings } from './db';
+import { recordDiagnostic } from './diagnostics';
 
 /** A connected drive and the outcome of its last sync. */
 export interface DriveStatus {
@@ -68,12 +69,17 @@ export class SyncManager {
     this.state = { ...this.state, ...patch };
     for (const l of this.listeners) l(this.state);
     // Pending conflicts survive restarts, until resolved or one of the files is gone.
-    if (conflictsChanged) void this.settings.set(CONFLICTS_KEY, this.state.conflicts).catch(() => undefined);
+    if (conflictsChanged)
+      void this.settings
+        .set(CONFLICTS_KEY, this.state.conflicts)
+        .catch(() => recordDiagnostic('SAVE_FAILED'));
   }
 
   /** Saves pending editor changes (before a sync, or before the app locks). */
   async flushPending() {
-    await Promise.all([...this.flushers].map((flush) => flush().catch(() => undefined)));
+    await Promise.all(
+      [...this.flushers].map((flush) => flush().catch(() => recordDiagnostic('SAVE_FAILED'))),
+    );
   }
 
   /** Registers a pending-save flush (e.g. an open editor) awaited before every sync; returns an unregister. */
@@ -161,6 +167,7 @@ export class SyncManager {
   deleteAllLocalData(): Promise<void> {
     return this.locked(async () => {
       for (const account of await unwrap(api().drives())) await unwrap(api().removeDrive(account.id));
+      await unwrap(api().clearDiagnostics());
       await deleteLocalData(this.db);
       this.update({ drives: [], conflicts: [], message: null });
     });
@@ -193,6 +200,7 @@ export class SyncManager {
         this.update({ conflicts: this.state.conflicts.filter((c) => c.copyPath !== conflict.copyPath) });
         return true;
       } catch (e) {
+        recordDiagnostic('SYNC_FAILED');
         this.update({ message: `Could not ${what}: ${describe(e)}` });
         return false;
       }
@@ -215,6 +223,7 @@ export class SyncManager {
     try {
       drives = await this.refreshDrives();
     } catch (e) {
+      recordDiagnostic('SYNC_FAILED');
       this.update({ message: `Sync failed: ${describe(e)}` });
       return;
     }
@@ -232,11 +241,13 @@ export class SyncManager {
         try {
           targets.push(this.target(account));
         } catch (e) {
+          recordDiagnostic('SYNC_FAILED');
           messages.set(account.id, describe(e));
         }
       }
       const { outcomes, conflicts } = await this.multiSync.sync(targets);
       for (const outcome of outcomes) {
+        if (!outcome.result || outcome.result.errors.length > 0) recordDiagnostic('SYNC_STEP_FAILED');
         messages.set(
           outcome.driveId,
           outcome.result
@@ -257,6 +268,7 @@ export class SyncManager {
         conflicts: await this.pendingConflicts([...this.state.conflicts, ...conflicts]),
       });
     } catch (e) {
+      recordDiagnostic('SYNC_FAILED');
       this.update({ message: `Sync failed: ${describe(e)}` });
     } finally {
       this.update({ running: false });
