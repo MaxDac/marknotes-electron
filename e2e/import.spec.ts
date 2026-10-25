@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { build, type Rolldown } from 'vite';
 import type * as Converters from './importConverters';
 import { docx, docxImage, importPdf, importPng, p, zip } from './importFixtures';
+import { dismissFirstAccessGuide } from './onboarding';
 
 declare global {
   var MarkNotesImport: typeof Converters;
@@ -17,6 +18,7 @@ async function launch(userData: string): Promise<{ app: ElectronApplication; pag
     env: { ...process.env, MARKNOTES_E2E: '1', MARKNOTES_USER_DATA: userData, ELECTRON_RENDERER_URL: '' },
   });
   const page = await app.firstWindow();
+  await dismissFirstAccessGuide(page);
   await expect(page.getByRole('heading', { name: 'MarkNotes' })).toBeVisible();
   return { app, page };
 }

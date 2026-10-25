@@ -2,6 +2,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { dismissFirstAccessGuide } from './onboarding';
 
 async function launch(userData: string): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({
@@ -9,6 +10,7 @@ async function launch(userData: string): Promise<{ app: ElectronApplication; pag
     env: { ...process.env, MARKNOTES_E2E: '1', MARKNOTES_USER_DATA: userData, ELECTRON_RENDERER_URL: '' },
   });
   const page = await app.firstWindow();
+  await dismissFirstAccessGuide(page);
   await expect(page.getByRole('heading', { name: 'MarkNotes' })).toBeVisible();
   return { app, page };
 }
@@ -95,6 +97,8 @@ test('the app lock asks for the passphrase after locking and on restart', async 
     // Forgotten passphrase: the local data is deleted and the app lock removed.
     await page.getByRole('button', { name: 'Delete all local data' }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click();
+    await expect(page.getByRole('button', { name: 'Skip', exact: true })).toBeVisible();
+    await dismissFirstAccessGuide(page);
     await expect(page.getByRole('heading', { name: 'MarkNotes', exact: true })).toBeVisible();
     await expect(page.getByText('No notes here yet')).toBeVisible();
   } finally {

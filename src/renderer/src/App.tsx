@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LockStatus } from '../../preload/api';
 import { NoteStore } from '../../shared/noteStore';
 import { api, unwrap } from './data/api';
 import { loadChordSequencesEnabled, saveChordSequencesEnabled } from './data/chordSequences';
 import { IdbNodeBackend, openDatabase, Settings } from './data/db';
 import { RECONNECT_SETTING, ReconnectSync } from './data/reconnectSync';
+import { loadOnboardingHandled } from './data/onboarding';
 import { SyncManager } from './data/syncManager';
 import { AddDrive } from './ui/AddDrive';
 import { Browser } from './ui/Browser';
@@ -14,8 +15,10 @@ import { AppContext, errorMessage, type AppServices } from './ui/context';
 import { SettingsPage } from './ui/SettingsPage';
 import { applyTheme, type ThemeColor, type ThemeMode } from './ui/theme';
 import { UpdateBanner } from './ui/UpdateBanner';
+import { HelpPage } from './ui/HelpPage';
+import { FirstAccessGuide } from './ui/FirstAccessGuide';
 
-export type Page = 'notes' | 'settings' | 'addDrive' | 'conflicts';
+export type Page = 'notes' | 'settings' | 'addDrive' | 'conflicts' | 'help';
 
 interface Loaded {
   notes: NoteStore;
@@ -26,6 +29,7 @@ interface Loaded {
   chordSequences: boolean;
   idleMinutes: number;
   syncOnReconnect: boolean;
+  onboardingHandled: boolean;
 }
 
 async function load(): Promise<Loaded> {
@@ -46,6 +50,7 @@ async function load(): Promise<Loaded> {
     chordSequences: await loadChordSequencesEnabled(settings),
     idleMinutes: await settings.get<number>('lockIdleMinutes', DEFAULT_IDLE_MINUTES),
     syncOnReconnect: (await settings.get<unknown>(RECONNECT_SETTING, false)) === true,
+    onboardingHandled: await loadOnboardingHandled(settings),
   };
 }
 
@@ -67,7 +72,43 @@ export function App() {
   const [lock, setLock] = useState<LockStatus | null>(null);
   const [idleMinutes, setIdleMinutesState] = useState(DEFAULT_IDLE_MINUTES);
   const [syncOnReconnect, setSyncOnReconnectState] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [browserBlocked, setBrowserBlocked] = useState(false);
+  const [guideHandled, setGuideHandled] = useState(true);
+  const [guideAttempted, setGuideAttempted] = useState(false);
+  const workspaceFocus = useRef<HTMLElement | null>(null);
   const unlocked = lock?.state === 'unlocked';
+
+  const navigate = useCallback((next: Page) => {
+    if (next === 'help') workspaceFocus.current = document.activeElement as HTMLElement | null;
+    setPage(next);
+  }, []);
+  const restoreWorkspace = useCallback(() => {
+    setPage('notes');
+    requestAnimationFrame(() => {
+      const previous = workspaceFocus.current;
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+      else document.querySelector<HTMLButtonElement>('[data-tour="help"]')?.focus();
+    });
+  }, []);
+  const endGuide = useCallback(() => {
+    setGuideOpen(false);
+    setGuideHandled(true);
+    restoreWorkspace();
+  }, [restoreWorkspace]);
+  const interruptGuide = useCallback(() => {
+    setGuideOpen(false);
+    restoreWorkspace();
+  }, [restoreWorkspace]);
+
+  useEffect(() => {
+    if (!loaded || !unlocked || guideHandled || guideAttempted || browserBlocked || page !== 'notes') return;
+    const frame = requestAnimationFrame(() => {
+      setGuideAttempted(true);
+      setGuideOpen(true);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [loaded, unlocked, guideHandled, guideAttempted, browserBlocked, page]);
 
   useEffect(() => {
     unwrap(api().lockStatus()).then(setLock, (e) => setError(errorMessage(e)));
@@ -84,6 +125,7 @@ export function App() {
         setChordSequencesState(l.chordSequences);
         setIdleMinutesState(l.idleMinutes);
         setSyncOnReconnectState(l.syncOnReconnect);
+        setGuideHandled(l.onboardingHandled);
         l.sync.syncIfConnected();
       },
       (e) => setError(errorMessage(e)),
@@ -202,11 +244,33 @@ export function App() {
   return (
     <AppContext.Provider value={services}>
       <div className="app">
-        <UpdateBanner />
-        <Browser navigate={setPage} hidden={page !== 'notes'} />
-        {page === 'settings' && <SettingsPage navigate={setPage} />}
-        {page === 'addDrive' && <AddDrive onDone={() => setPage('settings')} />}
-        {page === 'conflicts' && <Conflicts onBack={() => setPage('notes')} />}
+        <div
+          className="app workspace"
+          inert={guideOpen}
+          data-onboarding-ready={guideHandled ? 'handled' : 'pending'}
+        >
+          <UpdateBanner />
+          <Browser navigate={navigate} hidden={page !== 'notes'} onBlockingChange={setBrowserBlocked} />
+          {page === 'settings' && <SettingsPage navigate={navigate} />}
+          {page === 'addDrive' && <AddDrive onDone={() => setPage('settings')} />}
+          {page === 'conflicts' && <Conflicts onBack={() => setPage('notes')} />}
+          {page === 'help' && (
+            <HelpPage
+              onBack={restoreWorkspace}
+              onReplay={() => {
+                setPage('notes');
+                setGuideOpen(true);
+              }}
+            />
+          )}
+        </div>
+        {guideOpen && (
+          <FirstAccessGuide
+            onDone={endGuide}
+            onInterrupted={interruptGuide}
+            connected={services.sync.current.drives.length > 0}
+          />
+        )}
       </div>
     </AppContext.Provider>
   );

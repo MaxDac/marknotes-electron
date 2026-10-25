@@ -2,6 +2,7 @@ import { _electron as electron, expect, test } from '@playwright/test';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { dismissFirstAccessGuide } from './onboarding';
 
 test('diagnostics are sanitized, offline, reviewed and explicitly consented before opening GitHub', async () => {
   const userData = mkdtempSync(join(tmpdir(), 'marknotes-diagnostics-e2e-'));
@@ -11,6 +12,7 @@ test('diagnostics are sanitized, offline, reviewed and explicitly consented befo
   });
   try {
     const page = await app.firstWindow();
+    await dismissFirstAccessGuide(page);
     await expect(page.getByRole('heading', { name: 'MarkNotes' })).toBeVisible({ timeout: 15_000 });
     await app.evaluate(({ shell }) => {
       const state = { urls: [] as string[], exports: [] as string[] };

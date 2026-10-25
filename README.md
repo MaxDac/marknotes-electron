@@ -18,6 +18,12 @@ All MarkNotes apps share the same drive folder and note format. Settings → Abo
 
 ## Features (parity with Android)
 
+- **First access guide and offline Help**: a short guide appears once after unlocking, including on existing
+  installations. Skip, close, Escape or Finish dismiss it on this device; replay it from **Help → Start guide**.
+  Its temporary practice note is held only in memory: it never autosaves, receives an ID, imports attachments or
+  syncs, and returning preserves your real editor workspace. Help explains Markdown with source and rendered
+  examples, current supported syntax and limits. The handled preference is encrypted with other settings and
+  survives **Delete all local data**; a full forgotten-passphrase reset clears it. No network access is needed.
 - **Offline-first notes** stored in IndexedDB in the renderer, as a tree of folders and `.md` notes. You can create, open,
   rename, delete and move notes and folders, and a sidebar shows the whole folder tree.
 - **Editor**: raw markdown (CodeMirror 6) with a preview toggle (markdown-it: tables, strikethrough, task lists,
