@@ -5,6 +5,12 @@ import type { NoteStore } from '../../../shared/noteStore';
 import { summary, type SyncConflict } from '../../../shared/syncEngine';
 import type { DriveAccount, FolderNotice } from '../../../shared/types';
 import type { ProviderInfo } from '../../../preload/api';
+import {
+  classifySyncFailure,
+  syncAttemptResult,
+  type SyncAttemptResult,
+  type SyncFailure,
+} from '../../../shared/syncFailure';
 import { api, IpcRemoteDriveStore, unwrap } from './api';
 import { deleteLocalData, IdbBaseContentStore, IdbSyncMetadataStore, type Db, type Settings } from './db';
 import { recordDiagnostic } from './diagnostics';
@@ -34,9 +40,12 @@ interface StoredStatus {
 const statusKey = (id: string) => `driveStatus:${id}`;
 const CONFLICTS_KEY = 'pendingConflicts';
 
+/** Whether a queued sync still runs once its turn comes: automatic syncs can be deferred or canceled meanwhile. */
+type SyncGate = () => 'start' | 'deferred' | 'stop';
+
 /**
- * Keeps the local notes in sync with every connected drive. Sync only runs on app launch and on demand:
- * there is no background or periodic polling.
+ * Keeps the local notes in sync with every connected drive. Sync runs on app launch, on demand and, when "Sync when
+ * reconnected" is on, after the network comes back: there is no background or periodic polling.
  */
 export class SyncManager {
   private state: SyncState = { drives: [], running: false, message: null, conflicts: [] };
@@ -46,6 +55,13 @@ export class SyncManager {
   private mergeBack: ConflictMergeBack;
   private providers: ProviderInfo[] = [];
   private readonly flushers = new Set<() => Promise<void>>();
+  /** The sync requested and not finished yet; later requests share it. */
+  private inFlight: Promise<SyncAttemptResult> | null = null;
+  /** A manual request joined `inFlight`: it runs even if the automatic request it started from was canceled. */
+  private manualRequested = false;
+  private readonly manualListeners = new Set<() => void>();
+  private readonly holds = new Set<symbol>();
+  private readonly holdListeners = new Set<(held: boolean) => void>();
 
   constructor(
     notes: NoteStore,
@@ -130,9 +146,67 @@ export class SyncManager {
     if (this.state.drives.length > 0) void this.syncNow();
   }
 
-  syncNow(): Promise<void> {
-    if (this.state.running) return Promise.resolve();
-    return this.locked(() => this.runSync());
+  /** Syncs now (launch, unlock, Sync now, after adding a drive or a merge); shares a sync already requested. */
+  syncNow(): Promise<SyncAttemptResult> {
+    for (const listener of this.manualListeners) listener();
+    if (this.inFlight) {
+      this.manualRequested = true;
+      return this.inFlight;
+    }
+    this.manualRequested = true;
+    return this.start(() => 'start');
+  }
+
+  /**
+   * Automatic sync ("Sync when reconnected"). It shares a sync already requested; otherwise, when its turn comes and
+   * pending edits are saved, it is `deferred` while a merge is in progress and stops once `canStart()` is false.
+   */
+  syncAutomatically(canStart: () => boolean): Promise<SyncAttemptResult> {
+    if (this.inFlight) return this.inFlight;
+    this.manualRequested = false;
+    return this.start(() => {
+      if (this.manualRequested) return 'start';
+      if (this.holds.size > 0) return 'deferred';
+      return canStart() ? 'start' : 'stop';
+    });
+  }
+
+  /** Called on every manual sync request, which replaces pending automatic syncs. */
+  onManualSync(listener: () => void): () => void {
+    this.manualListeners.add(listener);
+    return () => this.manualListeners.delete(listener);
+  }
+
+  /** Marks a merge in progress: automatic syncs wait until every hold is released. Returns the release. */
+  holdAutomaticSync(): () => void {
+    const hold = Symbol('merge');
+    this.holds.add(hold);
+    if (this.holds.size === 1) for (const listener of this.holdListeners) listener(true);
+    return () => {
+      if (this.holds.delete(hold) && this.holds.size === 0)
+        for (const listener of this.holdListeners) listener(false);
+    };
+  }
+
+  get automaticSyncHeld(): boolean {
+    return this.holds.size > 0;
+  }
+
+  onHoldChange(listener: (held: boolean) => void): () => void {
+    this.holdListeners.add(listener);
+    return () => this.holdListeners.delete(listener);
+  }
+
+  private start(gate: SyncGate): Promise<SyncAttemptResult> {
+    const run = this.locked(async () => {
+      try {
+        return await this.runSync(gate);
+      } finally {
+        this.inFlight = null;
+      }
+    });
+    this.inFlight = run;
+    return run;
   }
 
   /** Saves a newly connected drive (already stored by the main process) and syncs it. */
@@ -237,24 +311,33 @@ export class SyncManager {
     };
   }
 
-  private async runSync() {
+  private async runSync(gate: SyncGate): Promise<SyncAttemptResult> {
+    const before = gate();
+    if (before !== 'start') return { state: before };
     let drives: DriveAccount[];
     try {
       drives = await this.refreshDrives();
     } catch (e) {
       recordDiagnostic('SYNC_FAILED');
       this.update({ message: `Sync failed: ${describe(e)}` });
-      return;
+      return syncAttemptResult([classifySyncFailure(e)]);
     }
     if (drives.length === 0) {
       this.update({ message: 'Add a drive in Settings to sync', conflicts: [] });
-      return;
+      return { state: 'stop' };
     }
+    const previousMessage = this.state.message;
     this.update({ running: true, message: 'Syncing…' });
     try {
       // Pending editor saves land before the local tree is listed.
       await this.flushPending();
+      const after = gate();
+      if (after !== 'start') {
+        this.update({ message: previousMessage });
+        return { state: after };
+      }
       const messages = new Map<string, string>();
+      const failures: SyncFailure[] = [];
       const targets: DriveSyncTarget[] = [];
       for (const account of drives) {
         try {
@@ -262,11 +345,19 @@ export class SyncManager {
         } catch (e) {
           recordDiagnostic('SYNC_FAILED');
           messages.set(account.id, describe(e));
+          failures.push(classifySyncFailure(e));
         }
       }
       const { outcomes, conflicts } = await this.multiSync.sync(targets);
       for (const outcome of outcomes) {
         if (!outcome.result || outcome.result.errors.length > 0) recordDiagnostic('SYNC_STEP_FAILED');
+        if (!outcome.result) failures.push(outcome.failure ?? { kind: 'permanent' });
+        else if (outcome.result.errors.length > 0) {
+          const { errors, failures: classified } = outcome.result;
+          failures.push(
+            ...(classified?.length === errors.length ? classified : [{ kind: 'permanent' as const }]),
+          );
+        }
         messages.set(
           outcome.driveId,
           outcome.result
@@ -286,9 +377,11 @@ export class SyncManager {
         message: text,
         conflicts: await this.pendingConflicts([...this.state.conflicts, ...conflicts]),
       });
+      return syncAttemptResult(failures);
     } catch (e) {
       recordDiagnostic('SYNC_FAILED');
       this.update({ message: `Sync failed: ${describe(e)}` });
+      return syncAttemptResult([classifySyncFailure(e)]);
     } finally {
       this.update({ running: false });
     }

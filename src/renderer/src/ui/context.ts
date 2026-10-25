@@ -15,6 +15,9 @@ export interface AppServices {
   /** The "Chord sequences" setting: creating chord sequences is offered only when it is on. */
   chordSequences: boolean;
   setChordSequences(enabled: boolean): void;
+  /** The "Sync when reconnected" setting (off by default, stored on this device only). */
+  syncOnReconnect: boolean;
+  setSyncOnReconnect(enabled: boolean): Promise<void>;
   lock: LockStatus;
   setLock(status: LockStatus): void;
   /** Minutes without activity before the app locks (0: never); only used with the app lock. */

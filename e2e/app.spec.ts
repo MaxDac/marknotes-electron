@@ -101,6 +101,72 @@ async function createNote(page: Page, name: string) {
   await expect(page.getByTestId('note-title')).toHaveText(name);
 }
 
+test('reconnect sync is off by default and its device setting survives restart', async () => {
+  const userData = newUserData();
+  let { app, page } = await launch(userData);
+  try {
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const toggle = page.getByRole('switch', { name: 'Sync when reconnected' });
+    await expect(toggle).not.toBeChecked();
+    await toggle.check();
+    await expect(toggle).toBeChecked();
+    // Enabled again once the setting is saved.
+    await expect(toggle).toBeEnabled();
+    await app.close();
+    ({ app, page } = await launch(userData));
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await expect(page.getByRole('switch', { name: 'Sync when reconnected' })).toBeChecked();
+    await page.getByRole('switch', { name: 'Sync when reconnected' }).uncheck();
+    await expect(page.getByRole('switch', { name: 'Sync when reconnected' })).toBeEnabled();
+    await app.close();
+    ({ app, page } = await launch(userData));
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await expect(page.getByRole('switch', { name: 'Sync when reconnected' })).not.toBeChecked();
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
+
+test('foreground reconnect downloads notes only after opt-in and a new network transition', async () => {
+  const userData = newUserData();
+  const { app, page } = await launch(userData);
+  const transition = async () => {
+    await page.context().setOffline(true);
+    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
+    await page.context().setOffline(false);
+    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(true);
+  };
+  try {
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await page.getByRole('button', { name: 'Add drive' }).click();
+    await page.getByRole('button', { name: 'Dropbox', exact: true }).click();
+    await expect(page.getByText('Signed in to Dropbox as test@example.com')).toBeVisible();
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await expect(page.getByTestId('sync-message')).toContainText('↑0 ↓0');
+    await page.evaluate(() =>
+      window.marknotes.testRemote!('dropbox:test', 'put', 'MarkNotes/Reconnected.md', 'from another device'),
+    );
+    await transition();
+    await page.waitForTimeout(2300);
+    const entry = page.getByTestId('entry').filter({ hasText: 'Reconnected' });
+    await expect(entry).toHaveCount(0);
+    await page.getByRole('switch', { name: 'Sync when reconnected' }).check();
+    await page.waitForTimeout(2300);
+    await expect(entry).toHaveCount(0);
+    await transition();
+    await expect(page.getByTestId('sync-message')).toContainText('↓1');
+    await page.getByRole('button', { name: 'Back' }).click();
+    await expect(entry).toBeVisible();
+    await entry.click();
+    await expect(page.getByTestId('editor-field')).toContainText('from another device');
+  } finally {
+    await page.context().setOffline(false);
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+});
+
 test('notes, folders, editor and preview persist across restarts', async () => {
   const userData = newUserData();
   let { app, page } = await launch(userData);

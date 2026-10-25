@@ -16,6 +16,7 @@ import iconPath from '../../build/icon.png?asset';
 import type { RemoteOp } from '../preload/api';
 import { diagnosticEnvironment, type DiagnosticCode, type DiagnosticDraft } from '../shared/diagnostics';
 import type { DriveProvider } from '../shared/types';
+import { classifySyncFailure } from '../shared/syncFailure';
 import { FakeConnector } from './connectors/fake';
 import { CaptureProtection } from './captureProtection';
 import { createConnectors } from './connectors/registry';
@@ -131,7 +132,7 @@ function handle(channel: string, fn: (...args: never[]) => unknown) {
               : 'IPC_FAILED',
         );
       }
-      return { ok: false, error: errorMessage(e) };
+      return { ok: false, error: errorMessage(e), failure: classifySyncFailure(e) };
     }
   });
 }
