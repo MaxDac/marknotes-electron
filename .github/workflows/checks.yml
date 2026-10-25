@@ -1,7 +1,7 @@
 name: Checks
 
 # Reusable checks shared by PR CI, Main CI and Release.
-# Script contract (package.json): deps:check, deps:audit, lint, format:check, typecheck, test, test:parity, e2e, build, dist.
+# Script contract (package.json): deps:check, deps:audit, lint, format:check, typecheck, test:coverage, test:parity, e2e, build, dist.
 on:
   workflow_call:
 
@@ -61,7 +61,16 @@ jobs:
           cache: npm
       - uses: ./.github/actions/setup-sync-core
       - run: npm ci
-      - run: npm test
+      # Runs the unit tests with the coverage gate (thresholds in vitest.config.ts).
+      - run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Shared golden fixtures from marknotes-spec (spec/ submodule), also run by the Android and web apps.
   parity:
@@ -80,10 +89,15 @@ jobs:
       - run: npm ci
       - run: npm run test:parity
 
+  # The Linux entry keeps the original job name: it is a required status check in the main ruleset.
   e2e:
-    name: E2E (Playwright Electron)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    name: ${{ matrix.os == 'ubuntu-24.04' && 'E2E (Playwright Electron)' || format('E2E (Playwright Electron, {0})', matrix.os) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -94,12 +108,15 @@ jobs:
       - run: npm ci
       - run: npm run build
       # Electron needs a display on Linux runners.
-      - run: xvfb-run --auto-servernum npm run e2e
+      - if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run e2e
+      - if: runner.os != 'Linux'
+        run: npm run e2e
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.os }}
           path: |
             playwright-report
             test-results

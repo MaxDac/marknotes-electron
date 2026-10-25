@@ -1,11 +1,17 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MarkNotesApi } from '../src/preload/api';
-import { IdbNodeBackend, openDatabase, Settings, type Db } from '../src/renderer/src/data/db';
+import type { MarkNotesApi, ProviderInfo } from '../src/preload/api';
+import {
+  IdbNodeBackend,
+  IdbSyncMetadataStore,
+  openDatabase,
+  Settings,
+  type Db,
+} from '../src/renderer/src/data/db';
 import { SyncManager } from '../src/renderer/src/data/syncManager';
 import { NoteStore } from '../src/shared/noteStore';
 import type { SyncConflict } from '../src/shared/syncEngine';
-import type { DriveAccount } from '../src/shared/types';
+import type { DriveAccount, FolderNotice } from '../src/shared/types';
 
 const DRIVE: DriveAccount = {
   id: 'd1',
@@ -342,5 +348,143 @@ describe('SyncManager local data deletion', () => {
     removeFails = true;
     await expect(manager.deleteAllLocalData()).rejects.toThrow('nope');
     expect(await db.getAll('nodes')).not.toHaveLength(0);
+  });
+});
+
+describe('SyncManager drives and conflicts', () => {
+  const setup = async (conflicts: SyncConflict[] = []) => {
+    const notes = new NoteStore(new IdbNodeBackend(db));
+    const settings = new Settings(db);
+    for (const c of conflicts) {
+      await notes.write(c.path, 'base\nnote\n');
+      await notes.write(c.copyPath, 'base\ncopy\n');
+    }
+    await settings.set('pendingConflicts', conflicts);
+    const recorded: string[] = [];
+    window.marknotes.recordDiagnostic = async (code) => {
+      recorded.push(code);
+      return { ok: true, value: undefined };
+    };
+    const manager = new SyncManager(notes, db, settings, 'device');
+    await manager.init();
+    return { notes, settings, manager, recorded };
+  };
+  const OTHER: SyncConflict = { ...CONFLICT, path: 'm.md', copyPath: 'm (conflicted copy).md' };
+
+  it('notifies subscribers of every state change until they unsubscribe', async () => {
+    const { manager } = await setup();
+    const running: boolean[] = [];
+    const unsubscribe = manager.subscribe((state) => running.push(state.running));
+    await manager.syncNow();
+    expect(running).toContain(true);
+    expect(running.at(-1)).toBe(false);
+    unsubscribe();
+    const seen = running.length;
+    await manager.syncNow();
+    expect(running).toHaveLength(seen);
+  });
+
+  it('syncs a newly added drive, and syncs on demand only when a drive is connected', async () => {
+    const { manager } = await setup();
+    await manager.driveAdded();
+    expect(calls).toContain('remote:snapshot');
+    calls.length = 0;
+    manager.syncIfConnected();
+    await vi.waitFor(() => expect(calls).toContain('remote:snapshot'));
+    // A later request would share the sync still in flight.
+    await vi.waitFor(() => expect(manager.current.running).toBe(false));
+
+    window.marknotes.drives = async () => ({ ok: true, value: [] });
+    expect(await manager.syncNow()).toEqual({ state: 'stop' });
+    expect(manager.current.message).toBe('Add a drive in Settings to sync');
+    calls.length = 0;
+    manager.syncIfConnected();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(calls).toEqual([]);
+  });
+
+  it('reports an unavailable provider without contacting its drive', async () => {
+    window.marknotes.providers = async () => ({
+      ok: true,
+      value: [
+        {
+          provider: 'fake',
+          name: 'Fake',
+          browsable: false,
+          unavailableReason: 'Fake drives are not configured',
+        } as unknown as ProviderInfo,
+      ],
+    });
+    const { manager, recorded } = await setup();
+    expect(manager.current.drives[0].unavailableReason).toBe('Fake drives are not configured');
+    expect(await manager.syncNow()).toEqual({ state: 'stop' });
+    expect(calls).toEqual([]);
+    expect(manager.current.message).toBe('Fake: Fake drives are not configured');
+    expect(recorded).toContain('SYNC_FAILED');
+  });
+
+  it('reports a failure to list the drives and retries it when temporary', async () => {
+    const { manager, recorded } = await setup();
+    window.marknotes.drives = async () => ({
+      ok: false,
+      error: 'The main process is busy',
+      failure: { kind: 'retryable' },
+    });
+    expect(await manager.syncNow()).toEqual({ state: 'retry' });
+    expect(manager.current.message).toBe('Sync failed: The main process is busy');
+    expect(recorded).toEqual(['SYNC_FAILED']);
+  });
+
+  it('merges a conflicted copy back or discards it, then syncs both changes', async () => {
+    const { notes, manager } = await setup([CONFLICT, OTHER]);
+    expect(manager.current.conflicts).toEqual([CONFLICT, OTHER]);
+    expect(await manager.mergePreview(CONFLICT)).toBeDefined();
+
+    await manager.mergeCopyBack(CONFLICT, 'merged\n');
+    expect(await notes.read(CONFLICT.path)).toBe('merged\n');
+    expect(await notes.exists(CONFLICT.copyPath)).toBe(false);
+    expect(manager.current.conflicts).toEqual([OTHER]);
+    expect(calls).toContain('remote:snapshot');
+
+    calls.length = 0;
+    await manager.discardCopy(OTHER);
+    expect(await notes.read(OTHER.path)).toBe('base\nnote\n');
+    expect(await notes.exists(OTHER.copyPath)).toBe(false);
+    expect(manager.current.conflicts).toEqual([]);
+    expect(calls).toContain('remote:snapshot');
+  });
+
+  it('keeps the conflict and does not sync when it cannot be settled', async () => {
+    const { notes, manager, recorded } = await setup([CONFLICT]);
+    vi.spyOn(notes, 'write').mockRejectedValueOnce(new Error('The disk is full'));
+    await manager.mergeCopyBack(CONFLICT, 'merged\n');
+    expect(manager.current.message).toBe(`Could not merge ${CONFLICT.copyPath}: The disk is full`);
+    expect(manager.current.conflicts).toEqual([CONFLICT]);
+    expect(await notes.exists(CONFLICT.copyPath)).toBe(true);
+    expect(recorded).toEqual(['SYNC_FAILED']);
+    expect(calls).toEqual([]);
+  });
+
+  it('records failures to save pending edits or conflicts, and still syncs', async () => {
+    const { settings, manager, recorded } = await setup([CONFLICT]);
+    manager.onBeforeSync(() => Promise.reject(new Error('editor closed')));
+    await manager.syncNow();
+    expect(recorded).toContain('SAVE_FAILED');
+    expect(calls).toContain('remote:snapshot');
+
+    recorded.length = 0;
+    vi.spyOn(settings, 'set').mockRejectedValueOnce(new Error('quota exceeded'));
+    manager.keepBoth(CONFLICT);
+    await vi.waitFor(() => expect(recorded).toEqual(['SAVE_FAILED']));
+    expect(manager.current.conflicts).toEqual([]);
+  });
+
+  it('keeps a folder notice pending when it cannot be acknowledged', async () => {
+    const { manager } = await setup();
+    vi.spyOn(IdbSyncMetadataStore.prototype, 'acknowledgeFolderNotice').mockRejectedValueOnce(
+      new Error('database closed'),
+    );
+    await manager.acknowledgeFolder(DRIVE.id, { path: 'Old', generation: 3 } as unknown as FolderNotice);
+    expect(manager.current.message).toBe('Could not acknowledge the notice for Old: database closed');
   });
 });

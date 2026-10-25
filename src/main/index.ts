@@ -13,7 +13,7 @@ import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import iconPath from '../../build/icon.png?asset';
-import type { RemoteOp } from '../preload/api';
+import type { RemoteOp, TestFault } from '../preload/api';
 import { diagnosticEnvironment, type DiagnosticCode, type DiagnosticDraft } from '../shared/diagnostics';
 import type { DriveProvider } from '../shared/types';
 import { classifySyncFailure } from '../shared/syncFailure';
@@ -246,6 +246,11 @@ function registerIpc(
       if (action === 'put') return fake.put(path!, text!);
       if (action === 'read') return fake.text(path!) ?? null;
       return [...fake.nodes.keys()].sort();
+    });
+    handle('test:fault', async (driveId: string, fault: TestFault | null) => {
+      const drive = (await service.drives()).find((d) => d.id === driveId);
+      if (!drive) throw new Error('Unknown drive');
+      return (service.connectors[drive.provider] as FakeConnector).setFault(drive.id, fault);
     });
   }
 }

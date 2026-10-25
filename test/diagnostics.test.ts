@@ -117,6 +117,31 @@ describe('local diagnostic retention and sanitization', () => {
     expect(store.draft().body).toContain('UI_FAILED');
     expect(store.draft().body).toContain('SAVE_FAILED');
   });
+
+  it('drops lines that are valid JSON but not records', () => {
+    writeFileSync(
+      recordsFile(),
+      ['42', 'null', '"UI_FAILED"', JSON.stringify({ time: Number.MAX_VALUE, code: 'UI_FAILED' })].join('\n'),
+    );
+    openStore();
+    expect(readFileSync(recordsFile(), 'utf8')).toBe('');
+  });
+
+  it('keeps a recent export within the budget and removes it first when records need the space', () => {
+    const snapshot = join(directory, 'export.txt');
+    const recent = new Date(now - 1000);
+    writeFileSync(snapshot, 'exported');
+    utimesSync(snapshot, recent, recent);
+    seed([{ time: now, code: 'SAVE_FAILED' }]);
+    openStore();
+    expect(readdirSync(directory).sort()).toEqual(['errors.jsonl', 'export.txt']);
+
+    writeFileSync(snapshot, Buffer.alloc(DIAGNOSTICS_MAX_BYTES));
+    utimesSync(snapshot, recent, recent);
+    const store = openStore();
+    expect(readdirSync(directory)).toEqual(['errors.jsonl']);
+    expect(store.draft().body).toContain('SAVE_FAILED');
+  });
 });
 
 describe('reviewable GitHub draft', () => {

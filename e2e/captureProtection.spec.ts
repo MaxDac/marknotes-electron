@@ -1,26 +1,21 @@
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import type { ElectronApplication, Page } from '@playwright/test';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { expect, test as base } from './fixtures';
 import { dismissFirstAccessGuide } from './onboarding';
 
 const supported = process.platform === 'win32' || process.platform === 'darwin';
 const exec = promisify(execFile);
 
-test.setTimeout(120_000);
+/** The lock screen heading also matches. */
+const test = base.extend({
+  launch: async ({ launch }, use) => {
+    await use((options) => launch({ heading: /MarkNotes/, ...options }));
+  },
+});
 
-async function launch(userData: string) {
-  const app = await electron.launch({
-    args: process.platform === 'linux' ? ['.', '--no-sandbox'] : ['.'],
-    env: { ...process.env, MARKNOTES_E2E: '1', MARKNOTES_USER_DATA: userData, ELECTRON_RENDERER_URL: '' },
-  });
-  const page = await app.firstWindow();
-  await dismissFirstAccessGuide(page);
-  await expect(page.getByRole('heading', { name: /MarkNotes/ })).toBeVisible();
-  return { app, page };
-}
+test.setTimeout(120_000);
 
 async function status(page: Page) {
   return page.evaluate(async () => {
@@ -56,9 +51,13 @@ async function expectNativeProtection(app: ElectronApplication, enabled: boolean
     for (const value of values) expect(value).toBe(enabled);
   }
   if (process.platform !== 'win32') return;
+  // Windows applies the display affinity of a hidden window when it is shown: `isContentProtected` covers those.
   const handles = await app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows().map((win) => win.getNativeWindowHandle().readBigUInt64LE().toString()),
+    BrowserWindow.getAllWindows()
+      .filter((win) => win.isVisible())
+      .map((win) => win.getNativeWindowHandle().readBigUInt64LE().toString()),
   );
+  expect(handles.length).toBeGreaterThan(0);
   const { stdout } = await exec('powershell.exe', [
     '-NoProfile',
     '-NonInteractive',
@@ -105,100 +104,104 @@ async function anotherWindow(app: ElectronApplication, enabled: boolean, recreat
   return result.id;
 }
 
-test('capture preference persists, protects future windows before load, and updates every window', async () => {
-  const userData = mkdtempSync(join(tmpdir(), 'marknotes-capture-e2e-'));
-  let { app, page } = await launch(userData);
-  try {
-    expect(await status(page)).toMatchObject({ requested: false, supported, enabled: false });
-    await expectNativeProtection(app, false);
-    await page.getByRole('button', { name: 'Settings' }).click();
-    const toggle = page.getByRole('switch', { name: 'Protect notes from screen capture' });
-    await expect(page.getByText(/including ScreenCaptureKit/)).toBeVisible();
-    if (!supported) {
-      await expect(toggle).toBeDisabled();
-      await expect(page.getByText('Capture protection is not available on this platform.')).toBeVisible();
-      await anotherWindow(app, false);
-      return;
-    }
-    await toggle.click();
-    await expect.poll(() => status(page)).toMatchObject({ requested: true, enabled: true });
-    await expectNativeProtection(app, true);
-    const id = await anotherWindow(app, true);
-    await expectNativeProtection(app, true);
-    await toggle.click();
-    await expect.poll(() => status(page)).toMatchObject({ requested: false, enabled: false });
-    await expectNativeProtection(app, false);
-    await toggle.click();
-    await expect.poll(() => status(page)).toMatchObject({ requested: true, enabled: true });
-    await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.close(), id);
-    await app.close();
-    ({ app, page } = await launch(userData));
-    expect(await status(page)).toMatchObject({ requested: true, enabled: true });
-    await expectNativeProtection(app, true);
-    await anotherWindow(app, true);
-    await anotherWindow(app, true, true);
-    page = await app.firstWindow();
-    await expect(page.getByRole('heading', { name: 'MarkNotes', exact: true })).toBeVisible();
-    await expectNativeProtection(app, true);
-  } finally {
-    await app.close();
-    rmSync(userData, { recursive: true, force: true });
+test('capture preference persists, protects future windows before load, and updates every window', async ({
+  launch,
+}) => {
+  let { app, page } = await launch();
+  expect(await status(page)).toMatchObject({ requested: false, supported, enabled: false });
+  await expectNativeProtection(app, false);
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const toggle = page.getByRole('switch', { name: 'Protect notes from screen capture' });
+  await expect(page.getByText(/including ScreenCaptureKit/)).toBeVisible();
+  if (!supported) {
+    await expect(toggle).toBeDisabled();
+    await expect(page.getByText('Capture protection is not available on this platform.')).toBeVisible();
+    await anotherWindow(app, false);
+    return;
   }
+  await toggle.click();
+  await expect.poll(() => status(page)).toMatchObject({ requested: true, enabled: true });
+  await expectNativeProtection(app, true);
+  const id = await anotherWindow(app, true);
+  await expectNativeProtection(app, true);
+  await toggle.click();
+  await expect.poll(() => status(page)).toMatchObject({ requested: false, enabled: false });
+  await expectNativeProtection(app, false);
+  await toggle.click();
+  await expect.poll(() => status(page)).toMatchObject({ requested: true, enabled: true });
+  await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.close(), id);
+  await app.close();
+  ({ app, page } = await launch());
+  expect(await status(page)).toMatchObject({ requested: true, enabled: true });
+  await expectNativeProtection(app, true);
+  await anotherWindow(app, true);
+  await anotherWindow(app, true, true);
+  // The destroyed first window can still be listed until its close event arrives.
+  const heading = (w: Page) => w.getByRole('heading', { name: 'MarkNotes', exact: true });
+  const recreated = async () => {
+    for (const w of app.windows())
+      if (
+        !w.isClosed() &&
+        (await heading(w)
+          .isVisible()
+          .catch(() => false))
+      )
+        return w;
+    return undefined;
+  };
+  await expect.poll(recreated, { timeout: 15_000 }).toBeTruthy();
+  page = (await recreated())!;
+  await expect(page.getByRole('heading', { name: 'MarkNotes', exact: true })).toBeVisible();
+  await expectNativeProtection(app, true);
 });
 
-test('app lock forces protection on startup, disable and reset restore the device preference', async () => {
-  const userData = mkdtempSync(join(tmpdir(), 'marknotes-capture-lock-'));
-  let { app, page } = await launch(userData);
-  try {
-    await page.getByRole('button', { name: 'Settings' }).click();
-    await anotherWindow(app, false);
-    await enableLock(page);
-    await expect
-      .poll(() => status(page))
-      .toMatchObject({ requested: false, forced: true, enabled: supported });
-    await expectNativeProtection(app, supported);
-    const toggle = page.getByRole('switch', { name: 'Protect notes from screen capture' });
-    await expect(toggle).toBeDisabled();
-    if (supported) await expect(toggle).toBeChecked();
-    const rejected = await page.evaluate(() => window.marknotes.setCaptureProtection(false));
-    expect(rejected.ok).toBe(false);
-    await app.close();
-    ({ app, page } = await launch(userData));
-    await expect(page.getByRole('heading', { name: 'MarkNotes is locked' })).toBeVisible();
-    expect(await status(page)).toMatchObject({ forced: true, enabled: supported });
-    await expectNativeProtection(app, supported);
-    await anotherWindow(app, supported);
-    await page.getByLabel('Passphrase').fill('correct horse');
-    await page.getByRole('button', { name: 'Unlock', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'MarkNotes', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Settings' }).click();
-    await page.getByRole('button', { name: 'Turn off app lock' }).click();
-    const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('Passphrase', { exact: true }).fill('correct horse');
-    await dialog.getByRole('button', { name: 'Turn off', exact: true }).click();
-    await expect.poll(() => status(page)).toMatchObject({ forced: false });
-    expect(await status(page)).toMatchObject({ requested: false, forced: false, enabled: false });
-    await expectNativeProtection(app, false);
+test('app lock forces protection on startup, disable and reset restore the device preference', async ({
+  launch,
+}) => {
+  let { app, page } = await launch();
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await anotherWindow(app, false);
+  await enableLock(page);
+  await expect.poll(() => status(page)).toMatchObject({ requested: false, forced: true, enabled: supported });
+  await expectNativeProtection(app, supported);
+  const toggle = page.getByRole('switch', { name: 'Protect notes from screen capture' });
+  await expect(toggle).toBeDisabled();
+  if (supported) await expect(toggle).toBeChecked();
+  const rejected = await page.evaluate(() => window.marknotes.setCaptureProtection(false));
+  expect(rejected.ok).toBe(false);
+  await app.close();
+  ({ app, page } = await launch());
+  await expect(page.getByRole('heading', { name: 'MarkNotes is locked' })).toBeVisible();
+  expect(await status(page)).toMatchObject({ forced: true, enabled: supported });
+  await expectNativeProtection(app, supported);
+  await anotherWindow(app, supported);
+  await page.getByLabel('Passphrase').fill('correct horse');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'MarkNotes', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Turn off app lock' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Passphrase', { exact: true }).fill('correct horse');
+  await dialog.getByRole('button', { name: 'Turn off', exact: true }).click();
+  await expect.poll(() => status(page)).toMatchObject({ forced: false });
+  expect(await status(page)).toMatchObject({ requested: false, forced: false, enabled: false });
+  await expectNativeProtection(app, false);
 
-    if (supported) {
-      expect((await page.evaluate(() => window.marknotes.setCaptureProtection(true))).ok).toBe(true);
-    }
-    await enableLock(page);
-    await deleteLocalData(page);
-    expect(await status(page)).toMatchObject({ forced: true, enabled: supported });
-    await expectNativeProtection(app, supported);
-    await page.getByRole('button', { name: 'Settings' }).click();
-    await page.getByRole('button', { name: 'Lock now' }).click();
-    await expect(page.getByRole('heading', { name: 'MarkNotes is locked' })).toBeVisible();
-    await deleteLocalData(page);
-    expect(await status(page)).toMatchObject({ requested: supported, forced: false, enabled: supported });
-    await expectNativeProtection(app, supported);
-    await app.close();
-    ({ app, page } = await launch(userData));
-    expect(await status(page)).toMatchObject({ requested: supported, forced: false, enabled: supported });
-    await expectNativeProtection(app, supported);
-  } finally {
-    await app.close();
-    rmSync(userData, { recursive: true, force: true });
+  if (supported) {
+    expect((await page.evaluate(() => window.marknotes.setCaptureProtection(true))).ok).toBe(true);
   }
+  await enableLock(page);
+  await deleteLocalData(page);
+  expect(await status(page)).toMatchObject({ forced: true, enabled: supported });
+  await expectNativeProtection(app, supported);
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Lock now' }).click();
+  await expect(page.getByRole('heading', { name: 'MarkNotes is locked' })).toBeVisible();
+  await deleteLocalData(page);
+  expect(await status(page)).toMatchObject({ requested: supported, forced: false, enabled: supported });
+  await expectNativeProtection(app, supported);
+  await app.close();
+  ({ app, page } = await launch());
+  expect(await status(page)).toMatchObject({ requested: supported, forced: false, enabled: supported });
+  await expectNativeProtection(app, supported);
 });

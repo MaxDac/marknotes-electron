@@ -60,6 +60,7 @@ const api: MarkNotesApi = {
 
 if (process.env.MARKNOTES_E2E === '1') {
   api.testRemote = call('test:remote') as NonNullable<MarkNotesApi['testRemote']>;
+  api.testFault = call('test:fault') as NonNullable<MarkNotesApi['testFault']>;
 }
 
 contextBridge.exposeInMainWorld('marknotes', api);

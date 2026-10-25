@@ -1,37 +1,17 @@
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import type { Page } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { build, type Rolldown } from 'vite';
+import { expect, test, type LaunchedApp } from './fixtures';
 import type * as Converters from './importConverters';
 import { docx, docxImage, importPdf, importPng, p, zip } from './importFixtures';
-import { dismissFirstAccessGuide } from './onboarding';
 
 declare global {
   var MarkNotesImport: typeof Converters;
 }
 
-async function launch(userData: string): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await electron.launch({
-    args: process.platform === 'linux' ? ['.', '--no-sandbox'] : ['.'],
-    env: { ...process.env, MARKNOTES_E2E: '1', MARKNOTES_USER_DATA: userData, ELECTRON_RENDERER_URL: '' },
-  });
-  const page = await app.firstWindow();
-  await dismissFirstAccessGuide(page);
-  await expect(page.getByRole('heading', { name: 'MarkNotes' })).toBeVisible();
-  return { app, page };
-}
-
-async function withApp(run: (page: Page) => Promise<void>) {
-  const userData = mkdtempSync(join(tmpdir(), 'marknotes-e2e-'));
-  const { app, page } = await launch(userData);
-  try {
-    await run(page);
-  } finally {
-    await app.close();
-    rmSync(userData, { recursive: true, force: true });
-  }
+async function withApp(launch: () => Promise<LaunchedApp>, run: (page: Page) => Promise<void>) {
+  const { page } = await launch();
+  await run(page);
 }
 
 /** The converters bundled as a script, to run them where DOMParser and DecompressionStream exist. */
@@ -75,9 +55,9 @@ const word = (page: Page, bytes: Buffer, plain = false) =>
   );
 
 // Android's HtmlToMarkdownTest, DocxToMarkdownTest and the HTML case of ImportConverterTest, in the renderer.
-test('converts HTML and Word documents like the Android app', async () => {
+test('converts HTML and Word documents like the Android app', async ({ launch }) => {
   const script = await converters();
-  await withApp(async (page) => {
+  await withApp(launch, async (page) => {
     await page.evaluate(script);
 
     expect(
@@ -213,9 +193,9 @@ async function openImport(page: Page) {
   return dialogOf(page);
 }
 
-test('imports typed and pasted text with a title, a folder and optional formatting', async () => {
+test('imports typed and pasted text with a title, a folder and optional formatting', async ({ launch }) => {
   test.slow();
-  await withApp(async (page) => {
+  await withApp(launch, async (page) => {
     await page.getByRole('button', { name: 'New folder' }).click();
     await page.getByRole('textbox', { name: 'Name' }).fill('Imports');
     await page.getByRole('button', { name: 'Create', exact: true }).click();
@@ -275,9 +255,9 @@ test('imports typed and pasted text with a title, a folder and optional formatti
   });
 });
 
-test('imports dropped Markdown as it is and reports unsupported files', async () => {
+test('imports dropped Markdown as it is and reports unsupported files', async ({ launch }) => {
   test.slow();
-  await withApp(async (page) => {
+  await withApp(launch, async (page) => {
     await page.locator('.topbar').evaluate((element) => {
       const transfer = new DataTransfer();
       transfer.items.add(
@@ -309,9 +289,11 @@ test('imports dropped Markdown as it is and reports unsupported files', async ()
   });
 });
 
-test('imports Word images as attachments, PDF text and images, and reports unreadable PDFs', async () => {
+test('imports Word images as attachments, PDF text and images, and reports unreadable PDFs', async ({
+  launch,
+}) => {
   test.slow();
-  await withApp(async (page) => {
+  await withApp(launch, async (page) => {
     let dialog = await openImport(page);
     await dialog.getByLabel('Files').setInputFiles({
       name: 'Word.docx',

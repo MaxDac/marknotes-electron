@@ -17,6 +17,7 @@ npm run lint                  # eslint
 npm run format:check          # prettier (npx prettier --write <files> to fix)
 npm run typecheck             # tsc for main/preload/shared and renderer
 npm test                      # vitest unit tests (test/)
+npm run test:coverage         # unit tests with the v8 coverage gate (thresholds in vitest.config.ts)
 npm run test:parity           # marknotes-spec golden fixtures (parity/, needs spec/)
 npm run build                 # electron-vite bundles to out/
 npm run e2e                   # Playwright Electron E2E (after build; on Linux use xvfb-run)
@@ -32,9 +33,9 @@ Production-only installs skip the runtime. To repair an incomplete runtime downl
 | CI check (PR CI → `Checks / …`)    | Command                                                        |
 | ---------------------------------- | -------------------------------------------------------------- |
 | Lint (eslint, prettier, tsc)       | `lint`, `format:check`, `typecheck`, lockfile registry check   |
-| Unit tests (vitest)                | `npm test`                                                     |
+| Unit tests (vitest)                | `npm run test:coverage` (`npm test` plus the coverage gate)    |
 | Parity (marknotes-spec fixtures)   | `npm run test:parity`                                          |
-| E2E (Playwright Electron)          | `npm run build` + `xvfb-run npm run e2e`                       |
+| E2E (Playwright Electron[, os])    | `npm run build` + `npm run e2e` (Linux: xvfb), Linux/Win/macOS |
 | Build (linux)                      | `dist --linux AppImage deb` + `scripts/linux-package-smoke.sh` |
 | Package smoke (windows/macos)      | `dist` for NSIS and dmg/zip (x64 + arm64), unsigned            |
 | Dependencies (deprecations, audit) | `deps:check`, `deps:audit`                                     |
@@ -67,6 +68,11 @@ names are required status checks in the `main` ruleset.
 
 - TypeScript strict mode, ES modules, Prettier formatting; keep logic in `src/shared/` pure and covered by vitest.
 - Sync changes need sync engine tests against the fake remote (`src/shared/fakeRemote.ts`).
+- Unit test coverage is gated by the thresholds in `vitest.config.ts`. They ratchet: raise them to the new baseline
+  (rounded down) when tests add coverage, and never lower them.
+- E2E specs launch the app through the shared fixture in `e2e/fixtures.ts` (temporary profile, environment, platform
+  arguments and cleanup) and reuse `e2e/helpers.ts`. With `MARKNOTES_E2E=1` the fake drives can fail on demand through
+  `window.marknotes.testFault` (retryable or permanent, per operation). Skip a test on a platform only with a reason.
 - The `.marknotes/manifest.json` format is built and parsed by `@marknotes/sync`; only its path lives here
   (`manifestPath.ts`, used by the main-process drive stores).
 - Dependencies: no deprecated packages and zero audit findings. Read the README dependency policy before adding or
