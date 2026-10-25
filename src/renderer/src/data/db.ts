@@ -1,11 +1,15 @@
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import { sameNodes, type NodeBackend, type StoredNode } from '../../../shared/noteStore';
-import type {
-  BaseContentStore,
-  PendingConflictCopy,
-  PendingRename,
-  SyncMetadataStore,
-  SyncRecord,
+import {
+  nextGeneration,
+  type BaseContentStore,
+  type FolderNotice,
+  type FolderRecreation,
+  type FolderWitness,
+  type PendingConflictCopy,
+  type PendingRename,
+  type SyncMetadataStore,
+  type SyncRecord,
 } from '../../../shared/types';
 import { deriveDbKeys, open, seal, tag, type DbKeys } from './crypto';
 
@@ -17,8 +21,9 @@ interface EncryptedRecord {
   ct: Uint8Array;
 }
 
-type StoreName = 'nodes' | 'syncRecords' | 'baseContent' | 'settings' | 'conflictIntents' | 'renameIntents';
-type DriveStoreName = 'syncRecords' | 'baseContent' | 'conflictIntents' | 'renameIntents';
+type DriveStoreName =
+  'syncRecords' | 'baseContent' | 'conflictIntents' | 'renameIntents' | 'folderNotices' | 'folderWitnesses';
+type StoreName = 'nodes' | 'settings' | DriveStoreName;
 
 interface EncryptedDbSchema extends DBSchema {
   nodes: { key: string; value: EncryptedRecord };
@@ -27,6 +32,8 @@ interface EncryptedDbSchema extends DBSchema {
   settings: { key: string; value: EncryptedRecord };
   conflictIntents: { key: string; value: EncryptedRecord; indexes: { driveId: string } };
   renameIntents: { key: string; value: EncryptedRecord; indexes: { driveId: string } };
+  folderNotices: { key: string; value: EncryptedRecord; indexes: { driveId: string } };
+  folderWitnesses: { key: string; value: EncryptedRecord; indexes: { driveId: string } };
 }
 
 /** The unencrypted database of earlier versions, migrated on first start. */
@@ -48,6 +55,16 @@ const STORES: StoreName[] = [
   'settings',
   'conflictIntents',
   'renameIntents',
+  'folderNotices',
+  'folderWitnesses',
+];
+const DRIVE_STORES: DriveStoreName[] = [
+  'syncRecords',
+  'baseContent',
+  'conflictIntents',
+  'renameIntents',
+  'folderNotices',
+  'folderWitnesses',
 ];
 const driveKey = (driveId: string, path: string) => JSON.stringify([driveId, path]);
 const aad = (store: StoreName, k: string) => `${store}\u0000${k}`;
@@ -57,6 +74,25 @@ export interface Put {
   value: unknown;
   driveId?: string;
 }
+
+export interface StoreChange {
+  store: StoreName;
+  puts?: Put[];
+  deletes?: string[];
+}
+
+/** A record (as read with `getRaw`, undefined when missing) that must be unchanged when a transaction commits. */
+export interface Expectation {
+  store: StoreName;
+  key: string;
+  record: EncryptedRecord | undefined;
+}
+
+const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
+const sameRecord = (a: EncryptedRecord | undefined, b: EncryptedRecord | undefined) =>
+  a === undefined || b === undefined
+    ? a === b
+    : a.k === b.k && sameBytes(a.iv, b.iv) && sameBytes(a.ct, b.ct);
 
 /** IndexedDB with every record encrypted by the local key (see `crypto.ts`). */
 export class Db {
@@ -91,6 +127,12 @@ export class Db {
     return record ? this.openRecord<T>(store, record) : undefined;
   }
 
+  /** The encrypted record (for `Expectation`s) and its value. */
+  async getRaw<T>(store: StoreName, key: string): Promise<{ record?: EncryptedRecord; value?: T }> {
+    const record = await this.idb.get(store, await this.tagOf(store, key));
+    return record ? { record, value: await this.openRecord<T>(store, record) } : {};
+  }
+
   async getAll<T>(store: StoreName): Promise<T[]> {
     return Promise.all((await this.idb.getAll(store)).map((r) => this.openRecord<T>(store, r)));
   }
@@ -107,6 +149,52 @@ export class Db {
     const tx = this.idb.transaction(store, 'readwrite');
     for (const k of deleted) void tx.store.delete(k);
     for (const record of records) void tx.store.put(record);
+    await tx.done;
+  }
+
+  /**
+   * Writes the changes of several stores in one transaction. It aborts without changes when an expected record
+   * changed or a node of `absentNodes` exists (parent folders always exist, so this covers the whole subtree).
+   */
+  async transact(changes: StoreChange[], options: { expect?: Expectation[]; absentNodes?: string[] } = {}) {
+    const sealed = await Promise.all(
+      changes.map(async (c) => ({
+        store: c.store,
+        records: await Promise.all((c.puts ?? []).map((p) => this.sealRecord(c.store, p))),
+        deleted: await Promise.all((c.deletes ?? []).map((key) => this.tagOf(c.store, key))),
+      })),
+    );
+    const expected = await Promise.all(
+      (options.expect ?? []).map(async (e) => ({ ...e, k: await this.tagOf(e.store, e.key) })),
+    );
+    const absent = await Promise.all((options.absentNodes ?? []).map((p) => this.tagOf('nodes', p)));
+    const names = [
+      ...new Set<StoreName>([
+        ...sealed.map((s) => s.store),
+        ...expected.map((e) => e.store),
+        ...(absent.length > 0 ? ['nodes' as const] : []),
+      ]),
+    ];
+    if (names.length === 0) return;
+    const tx = this.idb.transaction(names, 'readwrite');
+    let error: string | undefined;
+    for (const e of expected) {
+      if (!sameRecord(await tx.objectStore(e.store).get(e.k), e.record))
+        error = 'Sync metadata changed during sync';
+    }
+    for (const k of absent) {
+      if ((await tx.objectStore('nodes').getKey(k)) !== undefined) error = 'Local tree changed during sync';
+    }
+    if (error !== undefined) {
+      tx.abort();
+      await tx.done.catch(() => undefined);
+      throw new Error(error);
+    }
+    for (const s of sealed) {
+      const store = tx.objectStore(s.store);
+      for (const k of s.deleted) void store.delete(k);
+      for (const record of s.records) void store.put(record);
+    }
     await tx.done;
   }
 
@@ -186,7 +274,7 @@ export interface OpenOptions {
 }
 
 export async function openDatabase(options: OpenOptions): Promise<Db> {
-  const idb = await openDB<EncryptedDbSchema>(options.name ?? DB_NAME, 2, {
+  const idb = await openDB<EncryptedDbSchema>(options.name ?? DB_NAME, 3, {
     upgrade(db) {
       if (!db.objectStoreNames.contains('nodes')) db.createObjectStore('nodes', { keyPath: 'k' });
       if (!db.objectStoreNames.contains('syncRecords'))
@@ -198,6 +286,10 @@ export async function openDatabase(options: OpenOptions): Promise<Db> {
         db.createObjectStore('conflictIntents', { keyPath: 'k' }).createIndex('driveId', 'd');
       if (!db.objectStoreNames.contains('renameIntents'))
         db.createObjectStore('renameIntents', { keyPath: 'k' }).createIndex('driveId', 'd');
+      if (!db.objectStoreNames.contains('folderNotices'))
+        db.createObjectStore('folderNotices', { keyPath: 'k' }).createIndex('driveId', 'd');
+      if (!db.objectStoreNames.contains('folderWitnesses'))
+        db.createObjectStore('folderWitnesses', { keyPath: 'k' }).createIndex('driveId', 'd');
     },
   });
   const db = new Db(idb, await deriveDbKeys(options.key), options.rotateKey);
@@ -283,6 +375,8 @@ export class IdbNodeBackend implements NodeBackend {
 }
 
 const below = (path: string, candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
+const strictlyBelow = (path: string, candidate: string) => candidate.startsWith(`${path}/`);
+const noticeKey = (driveId: string, generation: number) => driveKey(driveId, `#${generation}`);
 
 export class IdbSyncMetadataStore implements SyncMetadataStore {
   constructor(
@@ -298,10 +392,10 @@ export class IdbSyncMetadataStore implements SyncMetadataStore {
   async delete(path: string) {
     await this.db.delete('syncRecords', driveKey(this.driveId, path));
   }
+  /** Deletes everything this drive keeps, its folder notices included (only when the drive is disconnected). */
   async clear() {
-    await this.db.clearDrive('syncRecords', this.driveId);
-    await this.db.clearDrive('conflictIntents', this.driveId);
-    await this.db.clearDrive('renameIntents', this.driveId);
+    for (const store of DRIVE_STORES)
+      if (store !== 'baseContent') await this.db.clearDrive(store, this.driveId);
   }
   pendingConflicts(): Promise<PendingConflictCopy[]> {
     return this.db.getAllForDrive('conflictIntents', this.driveId);
@@ -326,6 +420,168 @@ export class IdbSyncMetadataStore implements SyncMetadataStore {
   async deleteRename(path: string) {
     await this.db.delete('renameIntents', driveKey(this.driveId, path));
   }
+  async folderNotices(): Promise<FolderNotice[]> {
+    const notices = await this.db.getAllForDrive<FolderNotice>('folderNotices', this.driveId);
+    return notices.sort((a, b) => a.generation - b.generation);
+  }
+  folderWitnesses(): Promise<FolderWitness[]> {
+    return this.db.getAllForDrive<FolderWitness>('folderWitnesses', this.driveId);
+  }
+  async preserveFolder(path: string, remoteId: string) {
+    const key = driveKey(this.driveId, path);
+    const { record: raw, value: record } = await this.db.getRaw<SyncRecord>('syncRecords', key);
+    if (!record?.isFolder || record.remoteId !== remoteId) throw new Error('Folder record identity changed');
+    if (record.remoteFolderPreserved) return;
+    const notice: FolderNotice = {
+      path,
+      remoteId,
+      generation: nextGeneration(await this.folderNotices()),
+      acknowledged: false,
+      active: true,
+    };
+    const nKey = noticeKey(this.driveId, notice.generation);
+    await this.db.transact(
+      [
+        { store: 'syncRecords', puts: [this.put(key, { ...record, remoteFolderPreserved: true })] },
+        { store: 'folderNotices', puts: [this.put(nKey, notice)] },
+      ],
+      {
+        expect: [
+          { store: 'syncRecords', key, record: raw },
+          { store: 'folderNotices', key: nKey, record: undefined },
+        ],
+        absentNodes: [path],
+      },
+    );
+  }
+  async acknowledgeFolderNotice(generation: number) {
+    const key = noticeKey(this.driveId, generation);
+    const notice = await this.db.get<FolderNotice>('folderNotices', key);
+    if (!notice) throw new Error('Folder notice not found');
+    await this.db.put('folderNotices', key, { ...notice, acknowledged: true }, this.driveId);
+  }
+  async recreateFolders(changes: FolderRecreation[]) {
+    const all: StoreChange[] = [];
+    const expect: Expectation[] = [];
+    for (const { metadata, paths } of changes) {
+      if (!(metadata instanceof IdbSyncMetadataStore) || metadata.db !== this.db)
+        throw new Error('Folder recreation needs one transactional metadata backend');
+      const change = await metadata.recreation(paths);
+      all.push(...change.changes);
+      expect.push(...change.expect);
+    }
+    await this.db.transact(all, { expect });
+  }
+  private async recreation(paths: string[]) {
+    const deletes: string[] = [];
+    const witnesses: Put[] = [];
+    const expect: Expectation[] = [];
+    const retired = new Set<string>();
+    for (const path of paths) {
+      const key = driveKey(this.driveId, path);
+      const { record: raw, value: record } = await this.db.getRaw<SyncRecord>('syncRecords', key);
+      if (!record?.isFolder || !record.remoteFolderPreserved) continue;
+      deletes.push(key);
+      expect.push({ store: 'syncRecords', key, record: raw });
+      witnesses.push(this.put(key, { path, remoteId: record.remoteId } satisfies FolderWitness));
+      retired.add(path);
+    }
+    const notices = await this.retiredNotices((p) => retired.has(p));
+    return {
+      changes: [
+        { store: 'syncRecords', deletes },
+        { store: 'folderWitnesses', puts: witnesses },
+        { store: 'folderNotices', puts: notices },
+      ] satisfies StoreChange[],
+      expect,
+    };
+  }
+  async recordFolder(record: SyncRecord, base: BaseContentStore) {
+    const old = await this.db.get<SyncRecord>('syncRecords', driveKey(this.driveId, record.path));
+    const retire =
+      old?.isFolder && old.remoteId !== record.remoteId
+        ? await this.descendantRetirement(record.path, base)
+        : { records: [], copies: [], notices: [] };
+    const notices = [
+      ...(await this.retiredNotices((p) => p === record.path)),
+      ...retire.notices.map((n) => this.put(noticeKey(this.driveId, n.generation), n)),
+    ];
+    await this.db.transact([
+      {
+        store: 'syncRecords',
+        deletes: retire.records,
+        puts: [this.put(driveKey(this.driveId, record.path), record)],
+      },
+      { store: 'baseContent', deletes: retire.copies },
+      { store: 'folderNotices', puts: notices },
+      { store: 'folderWitnesses', deletes: [driveKey(this.driveId, record.path)] },
+    ]);
+  }
+  async retireFolderDescendants(path: string, base: BaseContentStore) {
+    const retire = await this.descendantRetirement(path, base);
+    await this.db.transact([
+      { store: 'syncRecords', deletes: retire.records },
+      { store: 'baseContent', deletes: retire.copies },
+      {
+        store: 'folderNotices',
+        puts: retire.notices.map((n) => this.put(noticeKey(this.driveId, n.generation), n)),
+      },
+    ]);
+  }
+  async forget(paths: string[]) {
+    const gone = new Set(paths);
+    const keys = paths.map((p) => driveKey(this.driveId, p));
+    await this.db.transact([
+      { store: 'syncRecords', deletes: keys },
+      { store: 'folderWitnesses', deletes: keys },
+      { store: 'folderNotices', puts: await this.retiredNotices((p) => gone.has(p)) },
+    ]);
+  }
+  async migrateFolderState(path: string, toPath: string) {
+    const moved = (p: string) => toPath + p.substring(path.length);
+    const notices = (await this.folderNotices()).filter((n) => below(path, n.path));
+    const witnesses = (await this.folderWitnesses()).filter((w) => below(path, w.path));
+    if (notices.length === 0 && witnesses.length === 0) return;
+    await this.db.transact([
+      {
+        store: 'folderNotices',
+        puts: notices.map((n) =>
+          this.put(noticeKey(this.driveId, n.generation), { ...n, path: moved(n.path) }),
+        ),
+      },
+      {
+        store: 'folderWitnesses',
+        deletes: witnesses.map((w) => driveKey(this.driveId, w.path)),
+        puts: witnesses.map((w) =>
+          this.put(driveKey(this.driveId, moved(w.path)), { ...w, path: moved(w.path) }),
+        ),
+      },
+    ]);
+  }
+  private put(key: string, value: unknown): Put {
+    return { key, value, driveId: this.driveId };
+  }
+  /** The active notices matching `matches`, retired (to be written in a transaction). */
+  private async retiredNotices(matches: (path: string) => boolean): Promise<Put[]> {
+    return (await this.folderNotices())
+      .filter((n) => n.active && matches(n.path))
+      .map((n) => this.put(noticeKey(this.driveId, n.generation), { ...n, active: false }));
+  }
+  /** The records and base copies strictly below `path` and its active descendant notices, retired. */
+  private async descendantRetirement(path: string, base: BaseContentStore) {
+    if (!(base instanceof IdbBaseContentStore) || base.db !== this.db || base.driveId !== this.driveId)
+      throw new Error('Folder history retirement needs one transactional metadata backend');
+    const records = (await this.all())
+      .filter((r) => strictlyBelow(path, r.path))
+      .map((r) => driveKey(this.driveId, r.path));
+    const copies = (await base.paths())
+      .filter((p) => strictlyBelow(path, p))
+      .map((p) => driveKey(this.driveId, p));
+    const notices = (await this.folderNotices())
+      .filter((n) => n.active && strictlyBelow(path, n.path))
+      .map((n) => ({ ...n, active: false }));
+    return { records, copies, notices };
+  }
 }
 
 interface BaseCopy {
@@ -336,9 +592,12 @@ interface BaseCopy {
 
 export class IdbBaseContentStore implements BaseContentStore {
   constructor(
-    private readonly db: Db,
-    private readonly driveId: string,
+    readonly db: Db,
+    readonly driveId: string,
   ) {}
+  async paths() {
+    return (await this.db.getAllForDrive<BaseCopy>('baseContent', this.driveId)).map((c) => c.path);
+  }
   async get(path: string) {
     return (await this.db.get<BaseCopy>('baseContent', driveKey(this.driveId, path)))?.bytes ?? null;
   }

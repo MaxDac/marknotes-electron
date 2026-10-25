@@ -1,6 +1,6 @@
-import { DEFAULT_MAX_PASSES, localDeletions, SyncScheduler } from '@marknotes/sync';
+import { DEFAULT_MAX_PASSES, SyncScheduler } from '@marknotes/sync';
 import type { NoteStore } from './noteStore';
-import { localChanges, SyncEngine, type SyncConflict, type SyncResult } from './syncEngine';
+import { flagLocalChanges, localChanges, SyncEngine, type SyncConflict, type SyncResult } from './syncEngine';
 import type { BaseContentStore, RemoteDriveStore, SyncMetadataStore } from './types';
 
 /** Everything needed to sync the local note tree with one drive. */
@@ -71,18 +71,12 @@ export class MultiDriveSync {
         onOutcome?.(outcome);
       }
     }
-    // Capture deletions for every drive before the first drive can recreate a moved note.
-    const local = await this.local.listAll();
-    for (const target of targets) {
-      if (outcomes.has(target.driveId)) continue;
-      const records = await target.metadata.all();
-      const deleted = new Set(localDeletions(local, records));
-      for (const record of records) {
-        if (deleted.has(record.path) && !record.localDeleted) {
-          await target.metadata.upsert({ ...record, localDeleted: true });
-        }
-      }
-    }
+    // Capture deletions and recreated folders for every drive before the first drive can change the local tree.
+    const ready = targets.filter((t) => !outcomes.has(t.driveId));
+    await flagLocalChanges(
+      await this.local.listAll(),
+      ready.map((t) => t.metadata),
+    );
     const byId = new Map(targets.map((t) => [t.driveId, t]));
     const conflicts: SyncConflict[] = [];
     const scheduler = new SyncScheduler(

@@ -1,7 +1,12 @@
 import { foldCase } from '@marknotes/sync';
 import { MANIFEST_PATH } from './manifestPath';
 import * as P from './paths';
-import { RemoteChangedError, type RemoteDriveStore, type RemoteEntry } from './types';
+import {
+  RemoteChangedError,
+  type RemoteDriveStore,
+  type RemoteEntry,
+  type RemoteFolderDeletion,
+} from './types';
 
 interface FakeNode {
   id: string;
@@ -14,6 +19,8 @@ interface FakeNode {
 /** In-memory remote drive used by unit tests and the end-to-end fake provider. */
 export class FakeRemoteDriveStore implements RemoteDriveStore {
   constructor(readonly timestampResolutionMillis = 1) {}
+  /** Undefined declares the default capability; 'unsupported' also makes folder deletion fail. */
+  remoteFolderDeletion?: RemoteFolderDeletion;
   readonly nodes = new Map<string, FakeNode>();
   manifest: Uint8Array | null = null;
   /** Number of writeManifest calls. */
@@ -118,6 +125,8 @@ export class FakeRemoteDriveStore implements RemoteDriveStore {
       (n.id !== entry.id || n.isFolder !== entry.isFolder || (!n.isFolder && n.version !== entry.version))
     )
       throw new RemoteChangedError(entry.path);
+    if (n?.isFolder && this.remoteFolderDeletion === 'unsupported')
+      throw new Error(`${entry.path}: folder deletion is not supported`);
     if (n?.isFolder && [...this.nodes.keys()].some((p) => P.isAncestor(entry.path, p)))
       throw new Error(`${entry.path} is not empty`);
     this.remove(entry.path);

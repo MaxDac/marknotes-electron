@@ -38,6 +38,7 @@ const formatDate = (millis: number) =>
 export function Browser(props: { navigate(page: Page): void; hidden: boolean }) {
   const { notes, sync, chordSequences, setChordSequences } = useApp();
   const syncState = useSyncState();
+  const folderNotices = syncState.drives.reduce((n, d) => n + d.folderNotices.length, 0);
   const version = useNotesVersion();
   const [folder, setFolder] = useState('');
   const [openNote, setOpenNote] = useState<string | null>(null);
@@ -163,6 +164,11 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
         {syncState.conflicts.length > 0 && (
           <button className="danger" onClick={() => props.navigate('conflicts')}>
             Sync conflicts<span className="badge">{syncState.conflicts.length}</span>
+          </button>
+        )}
+        {folderNotices > 0 && (
+          <button data-testid="folder-notices" onClick={() => props.navigate('settings')}>
+            Folders to remove<span className="badge">{folderNotices}</span>
           </button>
         )}
         {syncState.drives.length > 0 && (

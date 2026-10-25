@@ -217,6 +217,8 @@ interface Cached {
  * If-Match so a concurrent remote change is never overwritten.
  */
 export class OneDriveDriveStore implements RemoteDriveStore {
+  /** Graph deletes folders recursively: there is no atomic empty-only folder deletion. */
+  readonly remoteFolderDeletion = 'unsupported';
   private readonly folder: string;
   private rootId: string | null = null;
   private readonly byId = new Map<string, Cached>();

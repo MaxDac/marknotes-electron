@@ -11,6 +11,7 @@ import type { DriveConnector, RemoteFolderBrowser, SignedInAccount } from './typ
 
 /** A remote store scoped to `prefix` inside a whole fake drive. */
 class ScopedStore implements RemoteDriveStore {
+  readonly remoteFolderDeletion = 'unsupported';
   constructor(
     private readonly drive: FakeRemoteDriveStore,
     private readonly prefix: string,

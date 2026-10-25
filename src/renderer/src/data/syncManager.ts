@@ -3,7 +3,7 @@ import { ConflictMergeBack } from '../../../shared/conflictMergeBack';
 import { MultiDriveSync, type DriveSyncTarget } from '../../../shared/multiDriveSync';
 import type { NoteStore } from '../../../shared/noteStore';
 import { summary, type SyncConflict } from '../../../shared/syncEngine';
-import type { DriveAccount } from '../../../shared/types';
+import type { DriveAccount, FolderNotice } from '../../../shared/types';
 import type { ProviderInfo } from '../../../preload/api';
 import { api, IpcRemoteDriveStore, unwrap } from './api';
 import { deleteLocalData, IdbBaseContentStore, IdbSyncMetadataStore, type Db, type Settings } from './db';
@@ -15,6 +15,8 @@ export interface DriveStatus {
   lastSyncAt: number;
   message: string | null;
   unavailableReason: string | null;
+  /** Folders deleted locally but kept on this drive, whose manual-removal notice is not acknowledged yet. */
+  folderNotices: FolderNotice[];
 }
 
 export interface SyncState {
@@ -111,11 +113,13 @@ export class SyncManager {
         lastSyncAt: 0,
         message: null,
       });
+      const notices = await new IdbSyncMetadataStore(this.db, account.id).folderNotices();
       drives.push({
         account,
         ...status,
         unavailableReason:
           this.providers.find((p) => p.provider === account.provider)?.unavailableReason ?? null,
+        folderNotices: notices.filter((n) => n.active && !n.acknowledged),
       });
     }
     this.update({ drives });
@@ -170,6 +174,21 @@ export class SyncManager {
       await unwrap(api().clearDiagnostics());
       await deleteLocalData(this.db);
       this.update({ drives: [], conflicts: [], message: null });
+    });
+  }
+
+  /**
+   * Durably acknowledges a folder's manual-removal notice; it is not shown again. When saving fails, the notice
+   * stays pending and the failure is reported.
+   */
+  acknowledgeFolder(driveId: string, notice: FolderNotice): Promise<void> {
+    return this.locked(async () => {
+      try {
+        await new IdbSyncMetadataStore(this.db, driveId).acknowledgeFolderNotice(notice.generation);
+      } catch (e) {
+        this.update({ message: `Could not acknowledge the notice for ${notice.path}: ${describe(e)}` });
+      }
+      await this.refreshDrives();
     });
   }
 

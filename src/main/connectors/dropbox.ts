@@ -194,6 +194,8 @@ const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
  */
 export class DropboxDriveStore implements RemoteDriveStore {
   readonly supportsCaseOnlyRename = false;
+  /** Dropbox deletes folders recursively: there is no atomic empty-only folder deletion. */
+  readonly remoteFolderDeletion = 'unsupported';
   readonly timestampResolutionMillis = 1000;
   private readonly root: string;
   private readonly rootLower: string;
