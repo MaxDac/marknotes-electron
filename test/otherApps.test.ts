@@ -9,7 +9,7 @@ describe('other MarkNotes apps', () => {
         url: 'https://f-droid.org/packages/io.github.maxdac.marknotes.libre/',
       },
       {
-        label: 'MarkNotes Pro for Android (GitHub Releases)',
+        label: 'MarkNotes Plus for Android (GitHub Releases)',
         url: 'https://github.com/MaxDac/MarkNotes/releases',
       },
       { label: 'MarkNotes Web', url: 'https://marknotes.fly.dev' },
@@ -38,7 +38,7 @@ describe('other MarkNotes apps', () => {
     );
     const thrown = vi.fn().mockRejectedValue(new Error('ipc down'));
     await expect(openOtherApp(thrown, OTHER_APPS[1])).resolves.toBe(
-      'Could not open MarkNotes Pro for Android (GitHub Releases): ipc down',
+      'Could not open MarkNotes Plus for Android (GitHub Releases): ipc down',
     );
   });
 });
