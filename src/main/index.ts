@@ -17,6 +17,7 @@ import type { RemoteOp } from '../preload/api';
 import { diagnosticEnvironment, type DiagnosticCode, type DiagnosticDraft } from '../shared/diagnostics';
 import type { DriveProvider } from '../shared/types';
 import { FakeConnector } from './connectors/fake';
+import { CaptureProtection } from './captureProtection';
 import { createConnectors } from './connectors/registry';
 import type { DriveConnector } from './connectors/types';
 import { PRERELEASE_BUILD } from './config';
@@ -173,21 +174,31 @@ function registerIpc(
   storage: SecureStorageStatus,
   keys: LocalKeyManager,
   updater: UpdateController,
+  capture: CaptureProtection,
 ) {
+  handle('privacy:capture', () => capture.status());
+  handle('privacy:setCapture', (enabled: boolean) => capture.setRequested(enabled));
+  const refreshCapture = async <T>(operation: Promise<T>): Promise<T> => {
+    try {
+      return await operation;
+    } finally {
+      capture.refresh();
+    }
+  };
   handle('app:deviceId', () => service.deviceId());
   handle('app:secureStorage', () => storage);
   handle('lock:status', () => keys.status());
   handle('lock:key', () => keys.key());
   handle('lock:unlock', (passphrase: string) => keys.unlock(passphrase));
-  handle('lock:enable', (passphrase: string) => keys.enable(passphrase));
-  handle('lock:disable', (passphrase: string) => keys.disable(passphrase));
+  handle('lock:enable', (passphrase: string) => refreshCapture(keys.enable(passphrase)));
+  handle('lock:disable', (passphrase: string) => refreshCapture(keys.disable(passphrase)));
   handle('lock:change', (oldPassphrase: string, newPassphrase: string) =>
     keys.change(oldPassphrase, newPassphrase),
   );
   handle('lock:lockNow', () => lockApp(keys));
   handle('lock:reset', async () => {
     clearDiagnostics();
-    return keys.reset();
+    return refreshCapture(keys.reset());
   });
   handle('diagnostics:record', (code: unknown) => localDiagnostics().record(code));
   handle('diagnostics:clear', () => clearDiagnostics());
@@ -315,7 +326,21 @@ if (!e2e && !app.requestSingleInstanceLock()) {
     denyPermissions();
     const updater = createUpdater();
     const { service, storage, keys } = await createService();
-    registerIpc(service, storage, keys, updater);
+    const capture = new CaptureProtection(
+      join(app.getPath('userData'), 'capture-protection.json'),
+      process.platform,
+      () => keys.status().enabled,
+      () => BrowserWindow.getAllWindows(),
+      (status) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send('privacy:captureChanged', status);
+        }
+      },
+    );
+    await capture.init();
+    app.on('browser-window-created', (_event, win) => capture.protect(win));
+    capture.refresh();
+    registerIpc(service, storage, keys, updater, capture);
     powerMonitor.on('suspend', () => lockApp(keys));
     powerMonitor.on('lock-screen', () => lockApp(keys));
     createWindow();

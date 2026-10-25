@@ -102,6 +102,16 @@ Out of scope: search, tags, background sync, local encryption.
   60 minutes), when the computer sleeps and when the screen locks; locking forgets the key and reloads the window.
   Wrong passphrases get a generic error after a delay. **There is no recovery**: if you forget the passphrase, delete
   the local data from the lock screen and connect a drive again to download the notes (notes never synced are lost).
+- **Screen capture** (Settings → Privacy): blocks screenshots and screen sharing of every MarkNotes window on Windows
+  and macOS (`BrowserWindow.setContentProtection`), including windows opened later. Like Android's "Hide notes in
+  Recents and block screenshots", it is forced on while the app lock is enabled, including on the lock screen after a
+  restart; otherwise it is off by default, and turning off the app lock restores your own choice. The preference is
+  stored on this device only (`capture-protection.json` in the profile folder, outside the encrypted notes), survives
+  deleting the local data, and an unreadable file turns the protection on. Platform limits: it is best-effort, some
+  capture tools can bypass it (including ScreenCaptureKit on recent macOS versions); on Windows it needs Windows 10
+  2004 or later to hide the window rather than show it black, and takes effect at the next desktop composition, so a
+  capture started at that very moment may still include the window. **Linux** has no such API: the setting is
+  disabled there and has no effect.
 - **Settings → Delete all local data** disconnects every drive, deletes the local notes, images and sync state
   (nothing is deleted from the drives) and replaces the data key. When disconnecting the last drive you can also
   delete the local notes. Deleted IndexedDB data and the old unencrypted database may stay in the LevelDB files on
