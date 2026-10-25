@@ -103,6 +103,123 @@ textarea:focus {
   flex-direction: column;
   height: 100%;
 }
+.workspace {
+  min-height: 0;
+}
+.workspace > .app {
+  min-height: 0;
+}
+.workspace .topbar {
+  flex-wrap: wrap;
+}
+.help-example {
+  border-top: 1px solid var(--border);
+  padding-block: 12px;
+}
+.help-example pre {
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface);
+  padding: 12px;
+}
+.marknotes-guide.driver-popover {
+  background: var(--surface);
+  color: var(--text);
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  font-family: inherit;
+  pointer-events: auto;
+}
+.marknotes-guide .driver-popover-title,
+.marknotes-guide .driver-popover-description {
+  font-family: inherit;
+  font-size: 14px;
+}
+.marknotes-guide .driver-popover-footer button {
+  background: var(--primary);
+  color: var(--on-primary);
+  text-shadow: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.marknotes-guide .driver-popover-close-btn {
+  color: var(--text);
+  pointer-events: auto;
+}
+.marknotes-guide button:focus-visible,
+.guide-demo button:focus-visible,
+.markdown-help a:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.guide-demo {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(620px, calc(100vw - 24px));
+  max-height: 48vh;
+  overflow: auto;
+  border: 2px solid var(--primary);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--bg);
+  color: var(--text);
+  z-index: 1000000000;
+  pointer-events: auto;
+}
+.guide-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1000000001;
+}
+.guide-demo h2,
+.guide-demo p {
+  margin-block: 4px;
+  font-size: 14px;
+}
+.guide-demo .row {
+  flex-wrap: wrap;
+}
+.guide-demo textarea {
+  min-height: 120px;
+  resize: vertical;
+  font-family: monospace;
+}
+body:has(.guide-demo) .marknotes-guide {
+  max-height: calc(48vh - 12px);
+}
+.guide-error {
+  position: fixed;
+  top: 8px;
+  left: 12px;
+  right: 12px;
+  padding: 8px;
+  background: var(--surface);
+  color: var(--danger);
+  z-index: 10000000001;
+  pointer-events: auto;
+}
+@media (max-width: 700px) {
+  .workspace .sidebar {
+    width: 110px;
+  }
+  .workspace .list {
+    width: 150px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .driver-overlay,
+  .driver-popover,
+  .guide-demo {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
 .topbar {
   display: flex;
   align-items: center;

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, expect, test, type Browser } from '@playwright/test';
+import { dismissFirstAccessGuide } from './onboarding';
 
 function stopPreview(child: ChildProcess) {
   if (!child.pid) return;
@@ -79,6 +80,7 @@ test('npm preview builds and opens a usable app', async () => {
     page.on('pageerror', (error) => errors.push(error.message));
     // Reload after attaching so startup exceptions cannot precede the error listener.
     await page.reload();
+    await dismissFirstAccessGuide(page);
     await expect(page.getByRole('heading', { name: 'MarkNotes' })).toBeVisible();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.getByRole('button', { name: 'Add drive', exact: true }).click();

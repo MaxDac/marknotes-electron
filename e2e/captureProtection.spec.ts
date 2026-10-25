@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { dismissFirstAccessGuide } from './onboarding';
 
 const supported = process.platform === 'win32' || process.platform === 'darwin';
 const exec = promisify(execFile);
@@ -16,6 +17,7 @@ async function launch(userData: string) {
     env: { ...process.env, MARKNOTES_E2E: '1', MARKNOTES_USER_DATA: userData, ELECTRON_RENDERER_URL: '' },
   });
   const page = await app.firstWindow();
+  await dismissFirstAccessGuide(page);
   await expect(page.getByRole('heading', { name: /MarkNotes/ })).toBeVisible();
   return { app, page };
 }
@@ -41,6 +43,7 @@ async function deleteLocalData(page: Page) {
   await page.getByRole('button', { name: 'Delete all local data' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'MarkNotes', exact: true })).toBeVisible();
+  await dismissFirstAccessGuide(page);
 }
 
 /** Query the OS, not a JS mock, to check Electron's native Windows integration. */

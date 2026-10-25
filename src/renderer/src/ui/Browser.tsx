@@ -35,7 +35,11 @@ const treeOrder = (a: string, b: string) => {
 const formatDate = (millis: number) =>
   new Date(millis).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
-export function Browser(props: { navigate(page: Page): void; hidden: boolean }) {
+export function Browser(props: {
+  navigate(page: Page): void;
+  hidden: boolean;
+  onBlockingChange(blocked: boolean): void;
+}) {
   const { notes, sync, chordSequences, setChordSequences } = useApp();
   const syncState = useSyncState();
   const folderNotices = syncState.drives.reduce((n, d) => n + d.folderNotices.length, 0);
@@ -49,6 +53,9 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<{ entry: NoteEntry; x: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { onBlockingChange } = props;
+
+  useEffect(() => onBlockingChange(dialog !== null || menu !== null), [dialog, menu, onBlockingChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,7 +155,12 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
           <img src={logo} alt="" className="logo" />
           MarkNotes
         </h1>
-        <button className="filled" data-testid="new-note" onClick={() => setDialog({ kind: 'newNote' })}>
+        <button
+          className="filled"
+          data-testid="new-note"
+          data-tour="new-note"
+          onClick={() => setDialog({ kind: 'newNote' })}
+        >
           New note
         </button>
         {chordSequences && (
@@ -157,7 +169,11 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
           </button>
         )}
         <button onClick={() => setDialog({ kind: 'newFolder' })}>New folder</button>
-        <button data-testid="import" onClick={() => setDialog({ kind: 'import', request: null })}>
+        <button
+          data-testid="import"
+          data-tour="import"
+          onClick={() => setDialog({ kind: 'import', request: null })}
+        >
           Import…
         </button>
         <div className="spacer" />
@@ -176,7 +192,16 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
             {syncState.running ? 'Syncing…' : 'Sync now'}
           </button>
         )}
-        <button onClick={() => props.navigate('settings')}>Settings</button>
+        <button data-tour="settings" onClick={() => props.navigate('settings')}>
+          Settings
+        </button>
+        <button
+          data-tour="help"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => props.navigate('help')}
+        >
+          Help
+        </button>
       </div>
       {(syncState.message || error) && (
         <div className="status" data-testid="status">
@@ -184,7 +209,7 @@ export function Browser(props: { navigate(page: Page): void; hidden: boolean }) 
         </div>
       )}
       <div className="main">
-        <nav className="sidebar" aria-label="Folders">
+        <nav className="sidebar" aria-label="Folders" data-tour="folders">
           <h2>Folders</h2>
           <div className={`tree-row ${folder === '' ? 'current' : ''}`} onClick={() => setFolder('')}>
             <span className="toggle" />

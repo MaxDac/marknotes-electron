@@ -110,17 +110,20 @@ describe('encrypted database', () => {
     const old = key;
     const settings = new Settings(db);
     await settings.set('themeMode', 'dark');
+    await settings.set('onboardingHandled', true);
     await settings.set('driveStatus:d', { lastSyncAt: 1 });
     await new NoteStore(new IdbNodeBackend(db)).createNote('', 'Gone');
     await deleteLocalData(db);
     expect(key).not.toEqual(old);
     expect(await settings.get('themeMode', 'system')).toBe('dark');
+    expect(await settings.get('onboardingHandled', false)).toBe(true);
     expect(await settings.get('driveStatus:d', null)).toBeNull();
     expect(await db.getAll('nodes')).toEqual([]);
     db.close();
 
     const reopened = await openDatabase({ key, ...n });
     expect(await new Settings(reopened).get('themeMode', 'system')).toBe('dark');
+    expect(await new Settings(reopened).get('onboardingHandled', false)).toBe(true);
     reopened.close();
   });
 });

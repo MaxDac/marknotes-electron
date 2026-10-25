@@ -2,6 +2,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { dismissFirstAccessGuide } from './onboarding';
 
 async function launch(userData: string): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({
@@ -10,6 +11,7 @@ async function launch(userData: string): Promise<{ app: ElectronApplication; pag
     env: { ...process.env, MARKNOTES_E2E: '1', MARKNOTES_USER_DATA: userData, ELECTRON_RENDERER_URL: '' },
   });
   const page = await app.firstWindow();
+  await dismissFirstAccessGuide(page);
   await expect(page.getByRole('heading', { name: 'MarkNotes' })).toBeVisible();
   return { app, page };
 }
@@ -31,6 +33,7 @@ test('offers real Dropbox and OneDrive connections without environment configura
   });
   try {
     const page = await app.firstWindow();
+    await dismissFirstAccessGuide(page);
     await expect(page.getByRole('heading', { name: 'MarkNotes' })).toBeVisible();
     await page.getByRole('button', { name: 'Settings' }).click();
     await page.getByRole('button', { name: 'Add drive' }).click();
