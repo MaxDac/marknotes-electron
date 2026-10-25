@@ -151,47 +151,6 @@ const runners: Record<string, Runner> = {
  */
 const pendingSpecFixes: Record<string, Record<string, string>> = {};
 
-/**
- * Cases the spec still marks as a desktop known divergence but this app now passes, by fixture file. They run as
- * normal cases; the entry fails once the spec drops the annotation, so it is removed here too.
- * TODO: remove once the spec drops these desktop annotations (marknotes-spec#50).
- */
-const resolvedDivergences: Record<string, Set<string>> = {
-  'sync/executor-safety': new Set([
-    'a failed child download after ancestor replacement cannot restore stale deletion authority on restart',
-    'an explicitly unsupported removal preserves the folder with one notice and no recursive request',
-    'a pending manual-removal notice survives restart without folder resurrection or repeat actions',
-    'an acknowledged notice is not issued again after restart',
-    'a new remote child revives a preserved folder and is downloaded',
-    'a changed recorded remote child wins over preserved folder deletion',
-    'an ignored descendant protects a preserved folder without being downloaded',
-    'a new empty remote subfolder revives its preserved parent',
-    'local recreation permits a new notice for a later deletion of the same identity',
-    'local recreation with a missing remote counterpart creates remote instead of deleting local',
-    'remote disappearance retires the retained folder record and active notice',
-    'a replacement remote folder and descendant are not suppressed by an old deletion identity',
-    'two drives deduplicate independently and local recreation retires both histories before planning',
-    'new safe deletion support removes the retained folder and retires its notice',
-    'a failed listing cannot retire deferred state or imply remote disappearance',
-    'restart before preservation commits retries without losing the deletion baseline',
-    'restart after preservation commits keeps the pending notice without a duplicate',
-    'a failed preservation save is an explicit error and the next restart safely retries',
-    'a failed acknowledgement save leaves the same notice pending across restart',
-    'restart after recreation preflight cannot delete the restored folder',
-    'an unsupported provider does not hide a conditional child deletion failure',
-    'unchanged preserved subfolders do not resurrect their preserved parent',
-    'local recreation after planning prevents a stale preservation action',
-  ]),
-  'sync/plan': new Set([
-    'a local parent case rename migrates a remote-only preserved descendant',
-    'a drive parent case rename migrates a remote-only preserved descendant',
-    'unsupported empty folder deletion preserves history instead of requesting removal',
-    'an unchanged preserved remote folder produces no repeat action',
-    'a preserved folder replacement is new remote content',
-    'both present folders clear a preserved marker by recording',
-  ]),
-};
-
 function fixtureFiles(): string[] {
   if (!existsSync(FIXTURES)) {
     throw new Error(`${FIXTURES} not found: run "git submodule update --init" to fetch marknotes-spec.`);
@@ -222,15 +181,9 @@ describe('marknotes-spec fixtures', () => {
     const run = runners[file];
 
     for (const c of fixture.cases) {
-      const resolved = resolvedDivergences[file]?.has(c.name) ?? false;
-      const divergence = resolved ? undefined : c.knownDivergence?.[APP];
+      const divergence = c.knownDivergence?.[APP];
       const pending = pendingSpecFixes[file]?.[c.name];
-      if (resolved) {
-        it(`${c.name} (resolved desktop divergence)`, async () => {
-          expect(c.knownDivergence?.[APP], 'the spec no longer marks this divergence').toBeDefined();
-          expect(plain(await run(c.input))).toStrictEqual(c.expected);
-        });
-      } else if (pending) {
+      if (pending) {
         it.skip(`${c.name} (pending spec fix: ${pending})`, () => {});
       } else if (divergence) {
         // A known divergence must still differ, so a fix is noticed and the spec entry removed.
