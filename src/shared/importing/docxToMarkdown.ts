@@ -504,7 +504,10 @@ class Numbering {
 }
 
 function parseXml(bytes: Uint8Array): Document {
-  const doc = new DOMParser().parseFromString(decodeXml(bytes), 'application/xml');
+  const text = decodeXml(bytes);
+  // Refused before parsing, so that no entity is ever expanded; Word never writes a DOCTYPE.
+  if (/<!DOCTYPE|<!ENTITY/i.test(text)) throw new ImportError(DAMAGED);
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
   if (doc.doctype !== null || doc.getElementsByTagName('parsererror').length > 0 || !doc.documentElement) {
     throw new ImportError(DAMAGED);
   }
