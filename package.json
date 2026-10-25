@@ -38,7 +38,7 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.15",
     "@lezer/highlight": "^1.2.5",
-    "@marknotes/sync": "git+https://github.com/MaxDac/marknotes-sync.git#f18965f74318424f41a37cb4ef0dfc2fe3824742",
+    "@marknotes/sync": "git+https://github.com/MaxDac/marknotes-sync.git#48bdbdeda451963154d3a8defb7efc0d9a6f4cbb",
     "@protontech/drive-sdk": "^0.23.0",
     "bcryptjs": "^3.0.3",
     "electron-updater": "6.8.11",
