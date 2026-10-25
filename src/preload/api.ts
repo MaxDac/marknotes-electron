@@ -1,7 +1,8 @@
 import type { DriveAccount, DriveProvider, RemoteEntry, RemoteFolder } from '../shared/types';
 import type { DiagnosticCode, DiagnosticDraft } from '../shared/diagnostics';
+import type { SyncFailure } from '../shared/syncFailure';
 
-export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+export type Result<T> = { ok: true; value: T } | { ok: false; error: string; failure?: SyncFailure };
 
 /**
  * `secure`: an OS keychain protects saved credentials. `weak`: Linux without a keyring, credentials are only kept

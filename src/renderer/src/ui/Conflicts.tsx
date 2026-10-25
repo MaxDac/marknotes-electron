@@ -1,6 +1,6 @@
 import type { ConflictChoice, MergeResult } from '@marknotes/sync';
 import { mergeText } from '@marknotes/sync';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as P from '../../../shared/paths';
 import type { SyncConflict } from '../../../shared/syncEngine';
 import { PROVIDER_NAMES } from '../../../shared/types';
@@ -52,6 +52,9 @@ function ConflictCard(props: { conflict: SyncConflict; driveName: string }) {
   const other = conflict.winner === 'local' ? driveName : 'this device';
   const allChosen = merge !== null && Object.keys(choices).length === merge.conflicts;
   const merged = () => (merge ? mergeText(merge.chunks, choices as Record<number, ConflictChoice>) : '');
+  // "Sync when reconnected" waits while a merge is open, so the note does not change under it.
+  const merging = merge !== null || editing !== null;
+  useEffect(() => (merging ? sync.holdAutomaticSync() : undefined), [merging, sync]);
 
   const startMerge = async () => {
     setError(null);

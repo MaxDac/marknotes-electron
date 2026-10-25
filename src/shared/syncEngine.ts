@@ -18,6 +18,7 @@ import { generateNoteId } from './frontMatter';
 import { utf8 } from './hashing';
 import type { NoteStore, NoteEntry } from './noteStore';
 import * as P from './paths';
+import { classifySyncFailure, type SyncFailure } from './syncFailure';
 import type {
   BaseContentStore,
   PendingConflictCopy,
@@ -48,6 +49,7 @@ export interface SyncResult {
   deletedRemote: number;
   conflicts: SyncConflict[];
   errors: string[];
+  failures?: SyncFailure[];
   merged: number;
   /** Local folders created for folders found on the drive. */
   foldersCreated: number;
@@ -135,6 +137,7 @@ class SyncRun {
   private foldersCreated = 0;
   private readonly conflicts: SyncConflict[] = [];
   private readonly errors: string[] = [];
+  private readonly failures: SyncFailure[] = [];
   private readonly modified = new Map<string, number>();
   /** SHA-256 of every local file the plan saw, by path. */
   private readonly planned = new Map<string, string>();
@@ -207,6 +210,7 @@ class SyncRun {
       deletedRemote: this.deletedRemote,
       conflicts: this.conflicts,
       errors: this.errors,
+      failures: this.failures,
       merged: this.merged,
       foldersCreated: this.foldersCreated,
     };
@@ -234,11 +238,17 @@ class SyncRun {
     }
   }
 
+  /** Records a per-file error; `failures` stays index-aligned with `errors`. */
+  private fail(message: string, failure: SyncFailure = { kind: 'permanent' }) {
+    this.errors.push(message);
+    this.failures.push(failure);
+  }
+
   private async guarded(path: string, block: () => Promise<void>) {
     try {
       await block();
     } catch (e) {
-      this.errors.push(`${path}: ${errorMessage(e)}`);
+      this.fail(`${path}: ${errorMessage(e)}`, classifySyncFailure(e));
     }
   }
 
@@ -265,7 +275,7 @@ class SyncRun {
     const { local, remote, base } = this.e;
     switch (action.kind) {
       case 'error':
-        this.errors.push(`${action.path}: ${action.message}`);
+        this.fail(`${action.path}: ${action.message}`);
         return;
       case 'recordFolder':
         return this.recordFolder(action.path, action.remoteId);
@@ -431,7 +441,7 @@ class SyncRun {
         if (!untouched)
           throw new Error(`${pending.path}: drive changed during interrupted history migration`);
         await metadata.deleteRename(pending.path);
-        this.errors.push(`${pending.path}: changed on the drive before the case-only move`);
+        this.fail(`${pending.path}: changed on the drive before the case-only move`);
         return;
       }
       if (entry.path !== pending.toPath) await remote.rename(pending.remote, pending.toPath);

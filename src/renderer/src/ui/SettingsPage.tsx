@@ -15,7 +15,16 @@ import { StorageWarning } from './StorageWarning';
 import { PALETTES, THEME_MODES, type ThemeColor } from './theme';
 
 export function SettingsPage(props: { navigate(page: Page): void }) {
-  const { notes, sync, theme, setTheme, chordSequences, setChordSequences } = useApp();
+  const {
+    notes,
+    sync,
+    theme,
+    setTheme,
+    chordSequences,
+    setChordSequences,
+    syncOnReconnect,
+    setSyncOnReconnect,
+  } = useApp();
   const state = useSyncState();
   const [disconnect, setDisconnect] = useState<DriveStatus | null>(null);
   const [confirmClean, setConfirmClean] = useState(false);
@@ -25,6 +34,7 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
   const [confirmWipe, setConfirmWipe] = useState(false);
   const [wipeError, setWipeError] = useState<string | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [reconnectError, setReconnectError] = useState<string | null>(null);
   const lastDrive = state.drives.length === 1;
 
   return (
@@ -97,6 +107,31 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
           {state.message && (
             <p className="small" data-testid="sync-message">
               {state.message}
+            </p>
+          )}
+          <label className="row">
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label="Sync when reconnected"
+              checked={syncOnReconnect}
+              onChange={(e) => {
+                setReconnectError(null);
+                setSyncOnReconnect(e.target.checked).catch((error: unknown) =>
+                  setReconnectError(`Could not save the setting: ${errorMessage(error)}`),
+                );
+              }}
+            />
+            Sync when reconnected
+          </label>
+          <p className="small">
+            When the network comes back while MarkNotes is open and unlocked, sync after 2 seconds, retrying
+            after 5, 15 and 30 seconds if the drive cannot be reached. It waits while you merge a conflicted
+            copy. Off by default; stored on this device only.
+          </p>
+          {reconnectError && (
+            <p className="error small" role="alert">
+              {reconnectError}
             </p>
           )}
 
@@ -191,7 +226,7 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
           </p>
           <p className="small">
             MarkNotes is a personal, non-commercial project. Sync happens on app launch and when you click
-            &quot;Sync now&quot;; there is no background polling.
+            &quot;Sync now&quot;, and optionally when the network comes back; there is no background polling.
           </p>
           <h3>Other MarkNotes apps</h3>
           <p className="small">They share the same drive folder and note format.</p>

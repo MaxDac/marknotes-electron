@@ -44,7 +44,12 @@ All MarkNotes apps share the same drive folder and note format. Settings → Abo
   it on; **Enable** turns it on and opens the note, **Cancel** leaves the note closed.
 - **Appearance**: theme System, Light or Dark, and an accent colour from 8 palettes.
 - **Multi-drive two-way sync** with any number of Proton Drive, Dropbox and OneDrive accounts. Sync runs on launch and
-  on **Sync now** (no background polling). It keeps per-drive state and the `.marknotes/manifest.json` manifest, and merges lines
+  on **Sync now** (no background polling). **Settings → Sync when reconnected** (off by default, stored on this device
+  only) also syncs 2 seconds after the network comes back while the app is open and unlocked with a connected drive.
+  Temporary network or server failures (HTTP 408, 429, 5xx) are retried after 5, 15 and 30 seconds; sign-in and other
+  errors stop it until the next reconnection or **Sync now**. It waits while a conflicted copy is being merged, and
+  going offline, locking, disconnecting every drive, turning it off or **Sync now** cancel pending attempts. It keeps
+  per-drive state and the `.marknotes/manifest.json` manifest, and merges lines
   three-way against the last synced version. When edits overlap, the newest version wins and the other one is saved next
   to the note as `<name> (conflicted copy).md` (with a new note id) on every drive. The conflicts page merges the copy
   back (per change: Kept, Copy, Both, Neither, or edit by hand), discards it or keeps both files.

@@ -2,6 +2,7 @@ import { DEFAULT_MAX_PASSES, SyncScheduler } from '@marknotes/sync';
 import type { NoteStore } from './noteStore';
 import { flagLocalChanges, localChanges, SyncEngine, type SyncConflict, type SyncResult } from './syncEngine';
 import type { BaseContentStore, RemoteDriveStore, SyncMetadataStore } from './types';
+import { classifySyncFailure, type SyncFailure } from './syncFailure';
 
 /** Everything needed to sync the local note tree with one drive. */
 export interface DriveSyncTarget {
@@ -16,6 +17,7 @@ export interface DriveSyncOutcome {
   driveId: string;
   result: SyncResult | null;
   error: string | null;
+  failure?: SyncFailure;
 }
 
 /** `outcomes` holds the last pass of each drive; `conflicts` the conflicted copies made by every pass. */
@@ -66,6 +68,7 @@ export class MultiDriveSync {
           driveId: target.driveId,
           result: null,
           error: error instanceof Error ? error.message : String(error),
+          failure: classifySyncFailure(error),
         };
         outcomes.set(target.driveId, outcome);
         onOutcome?.(outcome);
@@ -90,7 +93,7 @@ export class MultiDriveSync {
           outcome = { driveId, result: await this.engine(byId.get(driveId)!).sync(), error: null };
         } catch (e) {
           const message = e instanceof Error ? e.message || e.name : String(e);
-          outcome = { driveId, result: null, error: message };
+          outcome = { driveId, result: null, error: message, failure: classifySyncFailure(e) };
         }
         outcomes.set(driveId, outcome);
         conflicts.push(...(outcome.result?.conflicts ?? []));

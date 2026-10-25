@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MarkNotesApi } from '../src/preload/api';
 import { IdbNodeBackend, openDatabase, Settings, type Db } from '../src/renderer/src/data/db';
 import { SyncManager } from '../src/renderer/src/data/syncManager';
@@ -84,6 +84,103 @@ describe('SyncManager', () => {
     calls.length = 0;
     await manager.syncNow();
     expect(calls).not.toContain('flush');
+  });
+});
+
+describe('SyncManager automatic sync', () => {
+  const manager = async () => {
+    const m = new SyncManager(new NoteStore(new IdbNodeBackend(db)), db, new Settings(db), 'device');
+    await m.init();
+    return m;
+  };
+  const blockedFlush = (m: SyncManager) => {
+    let release!: () => void;
+    const flush = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+    m.onBeforeSync(flush);
+    return { flush, release: () => release() };
+  };
+  const snapshots = () => calls.filter((call) => call === 'remote:snapshot').length;
+
+  it('retries only when every failure is classified as temporary', async () => {
+    const m = await manager();
+    for (const [failure, state] of [
+      [{ kind: 'retryable' }, 'retry'],
+      [{ kind: 'permanent' }, 'stop'],
+      [undefined, 'stop'],
+    ] as const) {
+      window.marknotes.remote = async () => ({ ok: false, error: 'drive failed', failure });
+      expect(await m.syncAutomatically(() => true)).toEqual({ state });
+      expect(m.current.message).toContain('drive failed');
+    }
+  });
+
+  it('shares one sync between manual and automatic requests', async () => {
+    const m = await manager();
+    const { flush, release } = blockedFlush(m);
+    const first = m.syncNow();
+    expect(m.syncNow()).toBe(first);
+    await vi.waitFor(() => expect(flush).toHaveBeenCalledTimes(1));
+    expect(m.syncAutomatically(() => true)).toBe(first);
+    release();
+    await first;
+    expect(snapshots()).toBe(1);
+  });
+
+  it('does not sync when canceled while pending edits are saved, and restores the message', async () => {
+    const m = await manager();
+    let allowed = true;
+    m.onBeforeSync(async () => {
+      allowed = false;
+    });
+    const before = m.current.message;
+    expect(await m.syncAutomatically(() => allowed)).toEqual({ state: 'stop' });
+    expect(calls).toEqual([]);
+    expect(m.current).toMatchObject({ running: false, message: before });
+  });
+
+  it('a manual request runs an automatic sync that was canceled meanwhile', async () => {
+    const m = await manager();
+    let allowed = true;
+    m.onManualSync(() => (allowed = false));
+    const { flush, release } = blockedFlush(m);
+    const automatic = m.syncAutomatically(() => allowed);
+    await vi.waitFor(() => expect(flush).toHaveBeenCalledTimes(1));
+    expect(m.syncNow()).toBe(automatic);
+    expect(allowed).toBe(false);
+    release();
+    await automatic;
+    expect(snapshots()).toBe(1);
+  });
+
+  it('defers automatic syncs while a merge is open; manual syncs still run', async () => {
+    const m = await manager();
+    const held = vi.fn();
+    m.onHoldChange(held);
+    const release = m.holdAutomaticSync();
+    const second = m.holdAutomaticSync();
+    expect(m.automaticSyncHeld).toBe(true);
+    expect(held.mock.calls).toEqual([[true]]);
+    expect(await m.syncAutomatically(() => true)).toEqual({ state: 'deferred' });
+    expect(calls).toEqual([]);
+    await m.syncNow();
+    expect(snapshots()).toBe(1);
+    release();
+    release();
+    expect(m.automaticSyncHeld).toBe(true);
+    second();
+    expect(m.automaticSyncHeld).toBe(false);
+    expect(held.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it('defers an automatic sync when a merge opens while pending edits are saved', async () => {
+    const m = await manager();
+    const { flush, release } = blockedFlush(m);
+    const automatic = m.syncAutomatically(() => true);
+    await vi.waitFor(() => expect(flush).toHaveBeenCalledTimes(1));
+    m.holdAutomaticSync();
+    release();
+    expect(await automatic).toEqual({ state: 'deferred' });
+    expect(calls).toEqual([]);
   });
 });
 

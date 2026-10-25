@@ -4,6 +4,7 @@ import { NoteStore } from '../../shared/noteStore';
 import { api, unwrap } from './data/api';
 import { loadChordSequencesEnabled, saveChordSequencesEnabled } from './data/chordSequences';
 import { IdbNodeBackend, openDatabase, Settings } from './data/db';
+import { RECONNECT_SETTING, ReconnectSync } from './data/reconnectSync';
 import { SyncManager } from './data/syncManager';
 import { AddDrive } from './ui/AddDrive';
 import { Browser } from './ui/Browser';
@@ -24,6 +25,7 @@ interface Loaded {
   color: ThemeColor;
   chordSequences: boolean;
   idleMinutes: number;
+  syncOnReconnect: boolean;
 }
 
 async function load(): Promise<Loaded> {
@@ -43,6 +45,7 @@ async function load(): Promise<Loaded> {
     color: await settings.get<ThemeColor>('themeColor', 'blue'),
     chordSequences: await loadChordSequencesEnabled(settings),
     idleMinutes: await settings.get<number>('lockIdleMinutes', DEFAULT_IDLE_MINUTES),
+    syncOnReconnect: (await settings.get<unknown>(RECONNECT_SETTING, false)) === true,
   };
 }
 
@@ -63,6 +66,7 @@ export function App() {
   const [chordSequences, setChordSequencesState] = useState(false);
   const [lock, setLock] = useState<LockStatus | null>(null);
   const [idleMinutes, setIdleMinutesState] = useState(DEFAULT_IDLE_MINUTES);
+  const [syncOnReconnect, setSyncOnReconnectState] = useState(false);
   const unlocked = lock?.state === 'unlocked';
 
   useEffect(() => {
@@ -79,6 +83,7 @@ export function App() {
         setThemeState({ mode: l.mode, color: l.color });
         setChordSequencesState(l.chordSequences);
         setIdleMinutesState(l.idleMinutes);
+        setSyncOnReconnectState(l.syncOnReconnect);
         l.sync.syncIfConnected();
       },
       (e) => setError(errorMessage(e)),
@@ -95,6 +100,38 @@ export function App() {
       void loaded.sync.flushPending().finally(() => window.location.reload());
     });
   }, [loaded]);
+
+  // "Sync when reconnected": only while the app runs unlocked; turning it on waits for the next reconnection.
+  useEffect(() => {
+    if (!loaded || !unlocked) return;
+    const { sync } = loaded;
+    const reconnect = new ReconnectSync(
+      {
+        enabled: syncOnReconnect,
+        online: navigator.onLine,
+        unlocked: true,
+        connected: sync.current.drives.length > 0,
+        idle: !sync.automaticSyncHeld,
+      },
+      (canStart) => sync.syncAutomatically(canStart),
+      (e) => console.error('Sync when reconnected failed', e),
+    );
+    const network = () => reconnect.update({ online: navigator.onLine });
+    window.addEventListener('online', network);
+    window.addEventListener('offline', network);
+    const unsubscribe = [
+      sync.subscribe((state) => reconnect.update({ connected: state.drives.length > 0 })),
+      sync.onHoldChange((held) => reconnect.update({ idle: !held })),
+      sync.onManualSync(() => reconnect.cancel()),
+      api().onLocked(() => reconnect.update({ unlocked: false })),
+    ];
+    return () => {
+      reconnect.destroy();
+      for (const off of unsubscribe) off();
+      window.removeEventListener('online', network);
+      window.removeEventListener('offline', network);
+    };
+  }, [loaded, unlocked, syncOnReconnect]);
 
   useEffect(() => {
     if (!loaded || !lock?.enabled || idleMinutes <= 0) return;
@@ -133,6 +170,11 @@ export function App() {
           void loaded.settings.set('themeColor', color);
         },
         chordSequences,
+        syncOnReconnect,
+        async setSyncOnReconnect(enabled) {
+          await loaded.settings.set(RECONNECT_SETTING, enabled);
+          setSyncOnReconnectState(enabled);
+        },
         setChordSequences(enabled) {
           setChordSequencesState(enabled);
           void saveChordSequencesEnabled(loaded.settings, enabled);
@@ -145,7 +187,7 @@ export function App() {
           void loaded.settings.set('lockIdleMinutes', minutes);
         },
       },
-    [loaded, theme, lock, idleMinutes, chordSequences],
+    [loaded, theme, lock, idleMinutes, chordSequences, syncOnReconnect],
   );
 
   if (error) return <div className="empty error">Could not open the notes: {error}</div>;
