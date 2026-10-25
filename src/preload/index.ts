@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { MarkNotesApi, UpdateStatus } from './api';
+import type { CaptureProtectionStatus, MarkNotesApi, UpdateStatus } from './api';
 
 const call =
   (channel: string) =>
@@ -15,6 +15,13 @@ const api: MarkNotesApi = {
   openDiagnosticsDraft: call('diagnostics:open') as MarkNotesApi['openDiagnosticsDraft'],
   deviceId: call('app:deviceId') as MarkNotesApi['deviceId'],
   secureStorage: call('app:secureStorage') as MarkNotesApi['secureStorage'],
+  captureProtection: call('privacy:capture') as MarkNotesApi['captureProtection'],
+  setCaptureProtection: call('privacy:setCapture') as MarkNotesApi['setCaptureProtection'],
+  onCaptureProtection(listener) {
+    const handler = (_event: unknown, status: CaptureProtectionStatus) => listener(status);
+    ipcRenderer.on('privacy:captureChanged', handler);
+    return () => ipcRenderer.removeListener('privacy:captureChanged', handler);
+  },
   lockStatus: call('lock:status') as MarkNotesApi['lockStatus'],
   localKey: call('lock:key') as MarkNotesApi['localKey'],
   unlock: call('lock:unlock') as MarkNotesApi['unlock'],
