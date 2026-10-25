@@ -59,6 +59,22 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
                   Disconnect
                 </button>
               </div>
+              {drive.folderNotices.map((notice) => (
+                <div className="row" key={notice.generation} data-testid="folder-notice">
+                  <div className="small" style={{ flex: 1 }}>
+                    The folder <strong>/{notice.path}</strong> was deleted on this device but kept on{' '}
+                    {PROVIDER_NAMES[drive.account.provider]} · {drive.account.label}: this drive cannot safely
+                    delete only empty folders. Remove it on the drive yourself if you no longer need it. It
+                    comes back on this device only if something is added to it on the drive.
+                  </div>
+                  <button
+                    className="outlined"
+                    onClick={() => void sync.acknowledgeFolder(drive.account.id, notice)}
+                  >
+                    OK
+                  </button>
+                </div>
+              ))}
             </div>
           ))}
           <div className="row">

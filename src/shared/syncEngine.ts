@@ -7,6 +7,7 @@ import {
   MANIFEST_PATH,
   plan,
   reconcile,
+  recreatedFolders,
   sha256Hex,
   type Action,
   type LocalEntry,
@@ -15,7 +16,7 @@ import {
 } from '@marknotes/sync';
 import { generateNoteId } from './frontMatter';
 import { utf8 } from './hashing';
-import type { NoteStore } from './noteStore';
+import type { NoteStore, NoteEntry } from './noteStore';
 import * as P from './paths';
 import type {
   BaseContentStore,
@@ -63,6 +64,28 @@ export function summary(r: SyncResult): string {
   if (r.conflicts.length > 0) s += `, ${r.conflicts.length} conflicted copy(ies)`;
   if (r.errors.length > 0) s += `, ${r.errors.length} error(s)`;
   return s;
+}
+
+/**
+ * The local recreation and deletion preflight, for every drive before any of them syncs. Preserved folders found
+ * again locally lose their record (keeping their drive identity as a witness) in one transaction over all drives;
+ * then every record missing locally is flagged deleted.
+ */
+export async function flagLocalChanges(local: NoteEntry[], stores: SyncMetadataStore[]) {
+  const changes = [];
+  for (const metadata of stores) {
+    const paths = recreatedFolders(local, await metadata.all());
+    if (paths.length > 0) changes.push({ metadata, paths });
+  }
+  if (changes.length > 0) await changes[0].metadata.recreateFolders(changes);
+  for (const metadata of stores) {
+    const records = await metadata.all();
+    const deleted = new Set(localDeletions(local, records));
+    for (const record of records) {
+      if (deleted.has(record.path) && !record.localDeleted)
+        await metadata.upsert({ ...record, localDeleted: true });
+    }
+  }
 }
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message || e.name : String(e));
@@ -123,12 +146,7 @@ class SyncRun {
   async execute(): Promise<SyncResult> {
     const { local, remote, metadata } = this.e;
     await this.recoverRenames();
-    const recordsBeforeReplay = await metadata.all();
-    const deleted = new Set(localDeletions(await local.listAll(), recordsBeforeReplay));
-    for (const record of recordsBeforeReplay) {
-      if (deleted.has(record.path) && !record.localDeleted)
-        await metadata.upsert({ ...record, localDeleted: true });
-    }
+    await flagLocalChanges(await local.listAll(), [metadata]);
     for (const pending of await metadata.pendingConflicts()) {
       await this.guarded(pending.intent.path, async () => {
         this.blocked.add(pending.intent.path);
@@ -156,6 +174,7 @@ class SyncRun {
       });
     }
     const remoteEntries = (await remote.snapshot()).map(toCore);
+    await this.retireReplacedFolders(remoteEntries);
     for (const entry of [...localEntries, ...remoteEntries]) this.knownPaths.add(entry.path);
     const manifest = await this.readManifest();
 
@@ -164,6 +183,7 @@ class SyncRun {
       remote: remoteEntries,
       records: await metadata.all(),
       manifest,
+      remoteFolderDeletion: remote.remoteFolderDeletion ?? 'atomicEmptyOnly',
     });
     for (const action of actions) {
       if (
@@ -190,6 +210,18 @@ class SyncRun {
       merged: this.merged,
       foldersCreated: this.foldersCreated,
     };
+  }
+
+  /**
+   * A folder recreated locally whose drive folder now has another identity: the history kept below it belongs to
+   * the old folder, so it is retired before planning (a folder missing from the drive is not a replacement).
+   */
+  private async retireReplacedFolders(remoteEntries: RemoteEntry[]) {
+    for (const witness of await this.e.metadata.folderWitnesses()) {
+      const listed = remoteEntries.find((e) => e.path === witness.path && e.isFolder);
+      if (listed && listed.id !== witness.remoteId)
+        await this.e.metadata.retireFolderDescendants(witness.path, this.e.base);
+    }
   }
 
   private async readManifest(): Promise<string | null> {
@@ -304,6 +336,11 @@ class SyncRun {
         await this.forgetTree(action.path, action.forget);
         this.deletedRemote++;
         return;
+      case 'preserveRemoteFolder':
+        // Recreated locally since planning: the next sync adopts the drive folder again.
+        if (await local.exists(action.path)) return;
+        await this.e.metadata.preserveFolder(action.path, action.remote.id);
+        return;
       case 'reconcile':
         return this.reconcileNote(action.path, action.remote, action.hasRecord);
       case 'renameLocal':
@@ -409,6 +446,7 @@ class SyncRun {
     }
     for (const record of pending.records) await metadata.delete(record.path);
     await base.delete(pending.path);
+    await metadata.migrateFolderState(pending.path, pending.toPath);
     await metadata.deleteRename(pending.path);
   }
 
@@ -625,23 +663,19 @@ class SyncRun {
   }
 
   private async recordFolder(path: string, remoteId: string) {
-    await this.e.metadata.upsert({
-      path,
-      isFolder: true,
-      remoteId,
-      remoteVersion: '',
-      localHash: '',
-      syncedAt: this.e.clock(),
-    });
+    await this.e.metadata.recordFolder(
+      { path, isFolder: true, remoteId, remoteVersion: '', localHash: '', syncedAt: this.e.clock() },
+      this.e.base,
+    );
   }
 
   private async forget(path: string) {
-    await this.e.metadata.delete(path);
+    await this.e.metadata.forget([path]);
     await this.e.base.delete(path);
   }
 
   private async forgetTree(folder: string, paths: string[]) {
-    for (const p of paths) await this.e.metadata.delete(p);
+    await this.e.metadata.forget(paths);
     await this.e.base.delete(folder);
   }
 }

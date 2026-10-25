@@ -29,6 +29,8 @@ function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
  */
 export class ProtonDriveStore implements RemoteDriveStore {
   readonly supportsCaseOnlyRename = false;
+  /** Proton Drive trashes folders with their content: there is no atomic empty-only folder deletion. */
+  readonly remoteFolderDeletion = 'unsupported';
   private rootUid: string | null = null;
   private scopeId: string | null = null;
   private cursor: string | undefined;
