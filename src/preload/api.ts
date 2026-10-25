@@ -135,6 +135,30 @@ export interface MarkNotesApi {
     path?: string,
     text?: string,
   ): Promise<Result<unknown>>;
+  /** Only available in end-to-end test builds: makes operations on a fake drive fail; null clears the fault. */
+  testFault?(driveId: string, fault: TestFault | null): Promise<Result<TestFault | null>>;
+}
+
+/** The fake drive operations a {@link TestFault} can target. */
+export type TestFaultOp =
+  | 'snapshot'
+  | 'download'
+  | 'uploadNew'
+  | 'uploadRevision'
+  | 'createFolder'
+  | 'delete'
+  | 'rename'
+  | 'readManifest'
+  | 'writeManifest';
+
+/** A failure injected into a fake drive by end-to-end tests. */
+export interface TestFault {
+  /** `retryable` fails like an HTTP 503, `permanent` like a rejected request. */
+  kind: 'retryable' | 'permanent';
+  /** Only this operation fails; every operation when missing. */
+  op?: TestFaultOp;
+  /** Failures left before the fault clears itself; it stays until cleared when missing. */
+  times?: number;
 }
 
 declare global {

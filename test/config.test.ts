@@ -14,19 +14,25 @@ afterEach(() => {
 });
 
 describe('public cloud provider registrations', () => {
-  it('enables real connectors without environment or build-time registration values', async () => {
-    const { DROPBOX_APP_KEY, MSAL_CLIENT_ID } = await import('../src/main/config');
-    expect(DROPBOX_APP_KEY).toBe('sdjefhss3elcfp3');
-    expect(MSAL_CLIENT_ID).toBe('eb2e8605-a611-4b3d-a087-31a9c2ae4945');
+  // The first import of the connector registry transforms the provider SDKs, which can exceed the default timeout on a
+  // busy machine.
+  it(
+    'enables real connectors without environment or build-time registration values',
+    { timeout: 30_000 },
+    async () => {
+      const { DROPBOX_APP_KEY, MSAL_CLIENT_ID } = await import('../src/main/config');
+      expect(DROPBOX_APP_KEY).toBe('sdjefhss3elcfp3');
+      expect(MSAL_CLIENT_ID).toBe('eb2e8605-a611-4b3d-a087-31a9c2ae4945');
 
-    const { createConnectors } = await import('../src/main/connectors/registry');
-    const connectors = createConnectors({
-      vault: { get: vi.fn(), set: vi.fn(), delete: vi.fn() },
-      openExternal: vi.fn(),
-    });
-    expect(connectors.dropbox.unavailableReason()).toBeNull();
-    expect(connectors.onedrive.unavailableReason()).toBeNull();
-  });
+      const { createConnectors } = await import('../src/main/connectors/registry');
+      const connectors = createConnectors({
+        vault: { get: vi.fn(), set: vi.fn(), delete: vi.fn() },
+        openExternal: vi.fn(),
+      });
+      expect(connectors.dropbox.unavailableReason()).toBeNull();
+      expect(connectors.onedrive.unavailableReason()).toBeNull();
+    },
+  );
 
   it('falls back to the public registrations for empty build and environment values', async () => {
     vi.stubEnv('DROPBOX_APP_KEY', '');

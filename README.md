@@ -231,7 +231,8 @@ Proton Drive needs no keys.
 ## CI/CD
 
 - `checks.yml` (reusable) checks dependencies (deprecations and a full all-severity audit), lint/format/types,
-  unit tests, the marknotes-spec parity fixtures ("Parity (marknotes-spec fixtures)"), Electron E2E, Linux AppImage/deb
+  unit tests with a coverage gate, the marknotes-spec parity fixtures ("Parity (marknotes-spec fixtures)"), Electron E2E
+  on Linux, Windows and macOS, Linux AppImage/deb
   packaging, and unsigned Windows NSIS/macOS dmg/zip packaging (both macOS architectures). PR, main and release
   workflows all inherit these checks; release packaging waits for them.
 - "Build (linux)" runs `scripts/linux-package-smoke.sh`: it checks the deb metadata (maintainer, package name,

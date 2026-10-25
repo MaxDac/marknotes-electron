@@ -25,6 +25,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:parity": "vitest run --config vitest.parity.config.ts",
     "e2e": "playwright test",
     "dist": "electron-vite build && electron-builder"
@@ -57,6 +58,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "@vitest/coverage-v8": "^5.0.5",
     "electron": "^45.0.0",
     "electron-builder": "26.18.0",
     "electron-vite": "^6.0.0",

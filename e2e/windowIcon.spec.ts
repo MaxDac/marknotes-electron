@@ -1,9 +1,9 @@
-import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test';
+import type { ElectronApplication } from '@playwright/test';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { expect, test } from './fixtures';
 
 const exec = promisify(execFile);
 
@@ -62,33 +62,26 @@ public static class WindowIcon {
   expect(stdout.trim()).toBe('MarkNotes window icons match');
 }
 
-test('Windows app windows use the bundled MarkNotes icon, including after recreation', async () => {
+test('Windows app windows use the bundled MarkNotes icon, including after recreation', async ({ launch }) => {
   test.skip(process.platform !== 'win32', 'Native Windows window icons');
-  const assets = join(process.cwd(), 'out', 'main', 'assets');
-  const icons = readdirSync(assets).filter((name) => name.endsWith('.ico'));
+  // electron-vite emits `?asset` imports next to the main bundle chunks.
+  const main = join(process.cwd(), 'out', 'main');
+  const icons = readdirSync(main, { recursive: true, encoding: 'utf8' }).filter((name) =>
+    name.endsWith('.ico'),
+  );
   expect(icons).toHaveLength(1);
-  const iconPath = join(assets, icons[0]);
+  const iconPath = join(main, icons[0]);
   expect(readFileSync(iconPath)).toEqual(readFileSync(join(process.cwd(), 'build', 'icon.ico')));
 
-  const userData = mkdtempSync(join(tmpdir(), 'marknotes-window-icon-'));
-  const app = await electron.launch({
-    args: ['.'],
-    env: { ...process.env, MARKNOTES_E2E: '1', MARKNOTES_USER_DATA: userData, ELECTRON_RENDERER_URL: '' },
+  const { app } = await launch();
+  await expectWindowsIcon(app, iconPath);
+  await app.evaluate(({ app, BrowserWindow }) => {
+    app.removeAllListeners('window-all-closed');
+    for (const window of BrowserWindow.getAllWindows()) window.destroy();
+    app.emit('activate');
   });
-  try {
-    await app.firstWindow();
-    await expectWindowsIcon(app, iconPath);
-    await app.evaluate(({ app, BrowserWindow }) => {
-      app.removeAllListeners('window-all-closed');
-      for (const window of BrowserWindow.getAllWindows()) window.destroy();
-      app.emit('activate');
-    });
-    await expect
-      .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible()))
-      .toBe(true);
-    await expectWindowsIcon(app, iconPath);
-  } finally {
-    await app.close();
-    rmSync(userData, { recursive: true, force: true });
-  }
+  await expect
+    .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible()))
+    .toBe(true);
+  await expectWindowsIcon(app, iconPath);
 });

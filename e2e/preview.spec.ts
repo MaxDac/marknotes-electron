@@ -23,6 +23,9 @@ function stopPreview(child: ChildProcess) {
   }
 }
 
+// Preview rebuilds the app first, which is slower on the Windows and macOS runners.
+test.setTimeout(180_000);
+
 test('npm preview builds and opens a usable app', async () => {
   const npmCli = process.env.npm_execpath;
   if (!npmCli) throw new Error('Run the preview smoke test through npm run e2e.');
@@ -68,7 +71,7 @@ test('npm preview builds and opens a usable app', async () => {
           }
           return /DevTools listening on (ws:\/\/\S+)/.exec(output)?.[1];
         },
-        { timeout: 30_000, message: 'Preview must build and start Electron remote debugging' },
+        { timeout: 120_000, message: 'Preview must build and start Electron remote debugging' },
       )
       .toBeTruthy();
     const endpoint = /DevTools listening on (ws:\/\/\S+)/.exec(output)?.[1];

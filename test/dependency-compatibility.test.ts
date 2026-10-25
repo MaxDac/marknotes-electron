@@ -41,79 +41,84 @@ afterEach(async () => {
 });
 
 describe('packaging dependency compatibility', () => {
-  it('applies the pinned patch once, tolerates repeat installs and rejects incompatible sources', async () => {
-    const root = fixture();
-    const manifest: { scripts: { postinstall: string } } = JSON.parse(
-      await readFile(new URL('../package.json', import.meta.url), 'utf8'),
-    );
-    await mkdir(join(root, 'scripts'));
-    await mkdir(join(root, 'patches'));
-    await mkdir(join(root, 'node_modules/temp/lib'), { recursive: true });
-    await copyFile(
-      new URL('../scripts/apply-dependency-patches.ts', import.meta.url),
-      join(root, 'scripts/apply-dependency-patches.ts'),
-    );
-    await copyFile(
-      new URL('../scripts/install-electron.ts', import.meta.url),
-      join(root, 'scripts/install-electron.ts'),
-    );
-    await mkdir(join(root, 'node_modules/electron'));
-    await writeFile(
-      join(root, 'node_modules/electron/install.js'),
-      "console.log('Electron runtime installer invoked');",
-    );
-    await copyFile(
-      new URL('../patches/temp+0.9.4.patch', import.meta.url),
-      join(root, 'patches/temp+0.9.4.patch'),
-    );
-    const source = join(root, 'node_modules/temp/lib/temp.js');
-    await copyFile(installerRequire.resolve('temp'), source);
-    const tempManifest = join(root, 'node_modules/temp/package.json');
-    await writeFile(tempManifest, JSON.stringify({ version: '0.9.4' }));
-    const reverse = spawnSync('git', ['apply', '--reverse', 'patches/temp+0.9.4.patch'], {
-      cwd: root,
-      encoding: 'utf8',
-    });
-    expect(reverse.stderr).toBe('');
-    expect(reverse.status).toBe(0);
+  // Runs the install scripts in child processes, which is slow under coverage instrumentation.
+  it(
+    'applies the pinned patch once, tolerates repeat installs and rejects incompatible sources',
+    { timeout: 30_000 },
+    async () => {
+      const root = fixture();
+      const manifest: { scripts: { postinstall: string } } = JSON.parse(
+        await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+      );
+      await mkdir(join(root, 'scripts'));
+      await mkdir(join(root, 'patches'));
+      await mkdir(join(root, 'node_modules/temp/lib'), { recursive: true });
+      await copyFile(
+        new URL('../scripts/apply-dependency-patches.ts', import.meta.url),
+        join(root, 'scripts/apply-dependency-patches.ts'),
+      );
+      await copyFile(
+        new URL('../scripts/install-electron.ts', import.meta.url),
+        join(root, 'scripts/install-electron.ts'),
+      );
+      await mkdir(join(root, 'node_modules/electron'));
+      await writeFile(
+        join(root, 'node_modules/electron/install.js'),
+        "console.log('Electron runtime installer invoked');",
+      );
+      await copyFile(
+        new URL('../patches/temp+0.9.4.patch', import.meta.url),
+        join(root, 'patches/temp+0.9.4.patch'),
+      );
+      const source = join(root, 'node_modules/temp/lib/temp.js');
+      await copyFile(installerRequire.resolve('temp'), source);
+      const tempManifest = join(root, 'node_modules/temp/package.json');
+      await writeFile(tempManifest, JSON.stringify({ version: '0.9.4' }));
+      const reverse = spawnSync('git', ['apply', '--reverse', 'patches/temp+0.9.4.patch'], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+      expect(reverse.stderr).toBe('');
+      expect(reverse.status).toBe(0);
 
-    const install = () =>
-      spawnSync(manifest.scripts.postinstall, {
+      const install = () =>
+        spawnSync(manifest.scripts.postinstall, {
+          cwd: root,
+          encoding: 'utf8',
+          shell: true,
+          env: { ...process.env, NODE_ENV: '', npm_config_omit: '' },
+        });
+      const first = install();
+      expect(first.stderr).toBe('');
+      expect(first.status).toBe(0);
+      expect(first.stdout).toContain('Applied temp');
+      expect(first.stdout).toContain('Electron runtime installer invoked');
+      const second = install();
+      expect(second.status).toBe(0);
+      expect(second.stdout).toContain('already applied');
+      await writeFile(source, 'incompatible source');
+      const broken = install();
+      expect(broken.status).not.toBe(0);
+      expect(broken.stderr).toContain('Cannot apply temp compatibility patch');
+      expect(broken.stdout).not.toContain('Electron runtime installer invoked');
+      await writeFile(tempManifest, JSON.stringify({ version: '1.0.0' }));
+      expect(install().stderr).toContain('requires exactly temp 0.9.4');
+      await rm(join(root, 'node_modules/temp'), { recursive: true });
+      await rm(join(root, 'node_modules/electron'), { recursive: true });
+      const runtimeOnly = spawnSync(manifest.scripts.postinstall, {
         cwd: root,
         encoding: 'utf8',
         shell: true,
-        env: { ...process.env, NODE_ENV: '', npm_config_omit: '' },
+        env: { ...process.env, npm_config_omit: 'dev', npm_config_include: '' },
       });
-    const first = install();
-    expect(first.stderr).toBe('');
-    expect(first.status).toBe(0);
-    expect(first.stdout).toContain('Applied temp');
-    expect(first.stdout).toContain('Electron runtime installer invoked');
-    const second = install();
-    expect(second.status).toBe(0);
-    expect(second.stdout).toContain('already applied');
-    await writeFile(source, 'incompatible source');
-    const broken = install();
-    expect(broken.status).not.toBe(0);
-    expect(broken.stderr).toContain('Cannot apply temp compatibility patch');
-    expect(broken.stdout).not.toContain('Electron runtime installer invoked');
-    await writeFile(tempManifest, JSON.stringify({ version: '1.0.0' }));
-    expect(install().stderr).toContain('requires exactly temp 0.9.4');
-    await rm(join(root, 'node_modules/temp'), { recursive: true });
-    await rm(join(root, 'node_modules/electron'), { recursive: true });
-    const runtimeOnly = spawnSync(manifest.scripts.postinstall, {
-      cwd: root,
-      encoding: 'utf8',
-      shell: true,
-      env: { ...process.env, npm_config_omit: 'dev', npm_config_include: '' },
-    });
-    expect(runtimeOnly.status).toBe(0);
-    expect(runtimeOnly.stdout).toContain('development dependencies are omitted');
-    expect(runtimeOnly.stdout).toContain('Skipping Electron runtime installation');
-    const missing = install();
-    expect(missing.status).not.toBe(0);
-    expect(missing.stderr).toContain('Missing temp build dependency');
-  });
+      expect(runtimeOnly.status).toBe(0);
+      expect(runtimeOnly.stdout).toContain('development dependencies are omitted');
+      expect(runtimeOnly.stdout).toContain('Skipping Electron runtime installation');
+      const missing = install();
+      expect(missing.status).not.toBe(0);
+      expect(missing.stderr).toContain('Missing temp build dependency');
+    },
+  );
 
   it('supports electron-builder stream packaging and electron-winstaller extraction', async () => {
     const root = fixture();
