@@ -337,6 +337,10 @@ the app icon, `marknotes-mark.svg` for the in-app logo). The rasters in `build/`
 and `icons/<size>.png` for Linux) are generated from them and committed; after changing an SVG run
 `npm i --no-save @resvg/resvg-js && node branding/generate-icons.mjs`.
 
+On Windows, app windows and taskbar buttons use the bundled `icon.ico` explicitly, including in development and preview;
+the runtime AppUserModelID matches the packaged app and its shortcuts. Linux windows use `icon.png`, while macOS
+uses its app bundle icon.
+
 ## License
 
 MarkNotes is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Commercial use is not permitted.
