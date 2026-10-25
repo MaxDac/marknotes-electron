@@ -8,6 +8,11 @@ const call =
 
 const api: MarkNotesApi = {
   platform: process.platform,
+  recordDiagnostic: call('diagnostics:record') as MarkNotesApi['recordDiagnostic'],
+  clearDiagnostics: call('diagnostics:clear') as MarkNotesApi['clearDiagnostics'],
+  exportDiagnostics: call('diagnostics:export') as MarkNotesApi['exportDiagnostics'],
+  diagnosticsDraft: call('diagnostics:draft') as MarkNotesApi['diagnosticsDraft'],
+  openDiagnosticsDraft: call('diagnostics:open') as MarkNotesApi['openDiagnosticsDraft'],
   deviceId: call('app:deviceId') as MarkNotesApi['deviceId'],
   secureStorage: call('app:secureStorage') as MarkNotesApi['secureStorage'],
   lockStatus: call('lock:status') as MarkNotesApi['lockStatus'],

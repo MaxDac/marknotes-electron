@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   powerMonitor,
   safeStorage,
@@ -8,16 +9,19 @@ import {
   shell,
   type IpcMainInvokeEvent,
 } from 'electron';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import iconPath from '../../build/icon.png?asset';
 import type { RemoteOp } from '../preload/api';
+import { diagnosticEnvironment, type DiagnosticCode, type DiagnosticDraft } from '../shared/diagnostics';
 import type { DriveProvider } from '../shared/types';
 import { FakeConnector } from './connectors/fake';
 import { createConnectors } from './connectors/registry';
 import type { DriveConnector } from './connectors/types';
 import { PRERELEASE_BUILD } from './config';
 import { DriveService } from './driveService';
+import { DiagnosticsStore } from './diagnostics';
 import { LocalKeyManager } from './localKey';
 import { isAppUrl, isTrustedSender } from './security';
 import { loadElectronUpdater, UpdateController } from './updater';
@@ -32,6 +36,38 @@ if (userDataOverride) app.setPath('userData', userDataOverride);
 const devServerUrl = devEnv('ELECTRON_RENDERER_URL') || undefined;
 const indexHtml = join(import.meta.dirname, '../renderer/index.html');
 const appUrl = devServerUrl ?? pathToFileURL(indexHtml).href;
+let diagnostics: DiagnosticsStore | undefined;
+let reviewedDraft: DiagnosticDraft | null = null;
+let diagnosticsWarned = false;
+
+function localDiagnostics(): DiagnosticsStore {
+  if (!diagnostics) throw new Error('Local diagnostics unavailable');
+  return diagnostics;
+}
+
+// Shown once per run: a broken log folder must not turn every later error into a modal box.
+function warnDiagnosticsUnavailable(detail: string) {
+  if (diagnosticsWarned) return;
+  diagnosticsWarned = true;
+  dialog.showErrorBox('Diagnostics unavailable', `${detail} No report was sent.`);
+}
+
+function recordDiagnostic(code: DiagnosticCode) {
+  try {
+    localDiagnostics().record(code);
+  } catch {
+    warnDiagnosticsUnavailable('Could not save local diagnostics.');
+  }
+}
+
+/** Also works when the store could not be opened, so deleting local data always removes the logs. */
+function clearDiagnostics() {
+  reviewedDraft = null;
+  if (diagnostics) diagnostics.clear();
+  else rmSync(diagnosticsDirectory(), { recursive: true, force: true });
+}
+
+const diagnosticsDirectory = () => join(app.getPath('userData'), 'diagnostics');
 
 const openExternal = async (url: string) => {
   if (!/^https?:\/\//i.test(url)) throw new Error('Only web links can be opened');
@@ -85,6 +121,15 @@ function handle(channel: string, fn: (...args: never[]) => unknown) {
     try {
       return { ok: true, value: await (fn as (...a: unknown[]) => unknown)(...args) };
     } catch (e) {
+      if (!channel.startsWith('diagnostics:')) {
+        recordDiagnostic(
+          channel.startsWith('drives:') || channel === 'remote:op'
+            ? 'DRIVE_FAILED'
+            : channel.startsWith('lock:')
+              ? 'LOCK_FAILED'
+              : 'IPC_FAILED',
+        );
+      }
       return { ok: false, error: errorMessage(e) };
     }
   });
@@ -102,6 +147,7 @@ function createUpdater(): UpdateController {
     },
     loadElectronUpdater,
     (status) => {
+      if (status.state === 'error') recordDiagnostic('UPDATE_FAILED');
       for (const win of BrowserWindow.getAllWindows()) win.webContents.send('update:changed', status);
     },
   );
@@ -139,7 +185,31 @@ function registerIpc(
     keys.change(oldPassphrase, newPassphrase),
   );
   handle('lock:lockNow', () => lockApp(keys));
-  handle('lock:reset', () => keys.reset());
+  handle('lock:reset', async () => {
+    clearDiagnostics();
+    return keys.reset();
+  });
+  handle('diagnostics:record', (code: unknown) => localDiagnostics().record(code));
+  handle('diagnostics:clear', () => clearDiagnostics());
+  handle('diagnostics:export', () => shell.showItemInFolder(localDiagnostics().export()));
+  handle('diagnostics:draft', () => {
+    reviewedDraft = localDiagnostics().draft(
+      diagnosticEnvironment(app.getVersion(), process.platform, process.arch),
+    );
+    return reviewedDraft;
+  });
+  handle('diagnostics:open', async (draft: DiagnosticDraft, consent: boolean) => {
+    if (
+      consent !== true ||
+      !reviewedDraft ||
+      draft?.url !== reviewedDraft.url ||
+      draft?.body !== reviewedDraft.body
+    )
+      throw new Error('Review the diagnostics and explicitly consent before opening GitHub');
+    const url = reviewedDraft.url;
+    reviewedDraft = null;
+    await openExternal(url);
+  });
   handle('app:openExternal', (url: string) => openExternal(url));
   handle('drives:providers', () => service.providers());
   handle('drives:list', () => service.drives());
@@ -186,14 +256,17 @@ function createWindow() {
     },
   });
   win.once('ready-to-show', () => win.show());
+  win.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason !== 'clean-exit') recordDiagnostic('RENDERER_EXITED');
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void openExternal(url).catch(() => undefined);
+    void openExternal(url).catch(() => recordDiagnostic('LINK_FAILED'));
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (event, url) => {
     if (url !== win.webContents.getURL()) {
       event.preventDefault();
-      void openExternal(url).catch(() => undefined);
+      void openExternal(url).catch(() => recordDiagnostic('LINK_FAILED'));
     }
   });
   if (devServerUrl) void win.loadURL(devServerUrl);
@@ -218,6 +291,19 @@ function denyPermissions() {
 if (!e2e && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  try {
+    diagnostics = new DiagnosticsStore(diagnosticsDirectory());
+    diagnostics.init();
+  } catch {
+    diagnostics = undefined;
+    warnDiagnosticsUnavailable('Could not open local diagnostics.');
+  }
+  process.on('uncaughtExceptionMonitor', () => recordDiagnostic('MAIN_UNCAUGHT'));
+  // Only the code is stored; the reason stays on the console, as without a listener.
+  process.on('unhandledRejection', (reason) => {
+    recordDiagnostic('MAIN_REJECTION');
+    console.error('Unhandled rejection in the main process:', reason);
+  });
   app.on('second-instance', () => {
     const win = BrowserWindow.getAllWindows()[0];
     if (win) {

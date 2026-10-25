@@ -7,6 +7,7 @@ import { api } from '../data/api';
 import type { DriveStatus } from '../data/syncManager';
 import { AppLockSettings } from './AppLockSettings';
 import { ConfirmDialog } from './Dialog';
+import { DiagnosticsSettings } from './DiagnosticsSettings';
 import { errorMessage, useApp, useSyncState } from './context';
 import { OTHER_APPS, openOtherApp } from './otherApps';
 import { StorageWarning } from './StorageWarning';
@@ -164,6 +165,7 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
           </div>
           {wipeError && <p className="error small">{wipeError}</p>}
 
+          <DiagnosticsSettings />
           <h2>About</h2>
           <p className="about-logo">
             <img src={logo} alt="" className="logo" />

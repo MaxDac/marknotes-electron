@@ -35,6 +35,7 @@ beforeEach(async () => {
   (globalThis as { window?: unknown }).window = {
     marknotes: {
       providers: () => ok([]),
+      recordDiagnostic: () => ok(undefined),
       drives: () => ok([DRIVE]),
       remote: (_id: string, op: { op: string }) => {
         calls.push(`remote:${op.op}`);
@@ -98,6 +99,11 @@ describe('SyncManager local data deletion', () => {
     (globalThis as { window?: unknown }).window = {
       marknotes: {
         providers: () => ok([]),
+        clearDiagnostics: () => {
+          calls.push('clearDiagnostics');
+          return ok(undefined);
+        },
+        recordDiagnostic: () => ok(undefined),
         drives: () => ok([...drives]),
         removeDrive: (id: string) => {
           calls.push(`removeDrive:${id}`);
@@ -145,7 +151,7 @@ describe('SyncManager local data deletion', () => {
     drives = [DRIVE, OTHER];
     const { manager } = await seed();
     await manager.deleteAllLocalData();
-    expect(calls).toEqual(['removeDrive:d1', 'removeDrive:d2']);
+    expect(calls).toEqual(['removeDrive:d1', 'removeDrive:d2', 'clearDiagnostics']);
     expect(drives).toEqual([]);
     expect(await db.getAll('nodes')).toHaveLength(0);
     expect(manager.current.drives).toEqual([]);

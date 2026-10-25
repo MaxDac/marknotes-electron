@@ -68,6 +68,18 @@ Out of scope: search, tags, background sync, local encryption.
 
 ## Security and privacy
 
+- **Local diagnostics**: Settings offers **Clear logs**, **Export logs** (offline) and **Report a problem**.
+  Errors are recorded by allowlisted category/code only, never raw messages, content, paths, identifiers or
+  credentials, so the log (`diagnostics/` in the profile folder) holds only times and codes and is not encrypted
+  or locked by the app lock. Logs and managed export snapshots are capped at seven days and 5 MiB, pruned on startup, write
+  and export. Clearing logs, deleting all local data or resetting a forgotten app lock passphrase also removes
+  managed snapshots; copies you save elsewhere are outside app control. Export opens a retained local snapshot in
+  the file manager; the next export replaces it. Nothing is reported automatically. Reporting requires review and
+  explicit consent before opening a GitHub issue draft for this repository: opening already transmits the excerpt
+  (and the app version, OS and architecture) to GitHub and may leave it in browser history, even without
+  submitting. The encoded URL is at most 2,000 ASCII characters, contains only whole records and marks omitted
+  older records. Native crashes and hangs are not captured.
+
 - **Drive credentials** (OAuth tokens, the Proton session and the key passphrase that decrypts the drive) are kept in
   `credentials.bin` in the profile folder, encrypted with Electron `safeStorage`: the macOS Keychain, Windows DPAPI or
   the Linux Secret Service/KWallet. The Proton password is only used to sign in and is never stored; a sign-in waiting
