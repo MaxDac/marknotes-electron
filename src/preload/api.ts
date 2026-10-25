@@ -24,6 +24,14 @@ export interface LockStatus {
   error: string | null;
 }
 
+export interface CaptureProtectionStatus {
+  requested: boolean;
+  forced: boolean;
+  supported: boolean;
+  /** Native protection requested on Windows/macOS; not a guarantee against every capture tool. */
+  enabled: boolean;
+}
+
 export interface SignedIn {
   id: string;
   provider: DriveProvider;
@@ -79,6 +87,9 @@ export interface MarkNotesApi {
   deviceId(): Promise<Result<string>>;
   /** How credentials are protected on this device (see `SecureStorageStatus`). */
   secureStorage(): Promise<Result<SecureStorageStatus>>;
+  captureProtection(): Promise<Result<CaptureProtectionStatus>>;
+  setCaptureProtection(enabled: boolean): Promise<Result<CaptureProtectionStatus>>;
+  onCaptureProtection(listener: (status: CaptureProtectionStatus) => void): () => void;
   lockStatus(): Promise<Result<LockStatus>>;
   /** The key that encrypts the local notes; fails while locked. */
   localKey(): Promise<Result<Uint8Array>>;

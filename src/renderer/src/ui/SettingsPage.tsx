@@ -6,6 +6,7 @@ import type { Page } from '../App';
 import { api } from '../data/api';
 import type { DriveStatus } from '../data/syncManager';
 import { AppLockSettings } from './AppLockSettings';
+import { CaptureProtectionSettings } from './CaptureProtectionSettings';
 import { ConfirmDialog } from './Dialog';
 import { DiagnosticsSettings } from './DiagnosticsSettings';
 import { errorMessage, useApp, useSyncState } from './context';
@@ -174,6 +175,7 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
             are only loaded when you ask for them in a note.
           </p>
           <AppLockSettings />
+          <CaptureProtectionSettings />
           <div className="row">
             <button className="outlined danger" onClick={() => setConfirmWipe(true)}>
               Delete all local data
