@@ -66,35 +66,38 @@ async function expectNativeProtection(app: ElectronApplication, enabled: boolean
 }
 
 async function anotherWindow(app: ElectronApplication, enabled: boolean, recreate = false) {
-  const result = await app.evaluate(({ app, BrowserWindow }, recreate) => {
-    const first = BrowserWindow.getAllWindows()[0];
-    const calls: { enabled: boolean; visible: boolean; url: string }[] = [];
-    app.prependOnceListener('browser-window-created', (_event, window) => {
-      const original = window.setContentProtection.bind(window);
-      window.setContentProtection = (value) => {
-        calls.push({ enabled: value, visible: window.isVisible(), url: window.webContents.getURL() });
-        original(value);
-      };
-    });
-    if (recreate) {
-      // Keep this test process alive on Windows/Linux to exercise the app's macOS activation path.
-      app.removeAllListeners('window-all-closed');
-      for (const window of BrowserWindow.getAllWindows()) window.destroy();
-      app.emit('activate');
-      return { id: BrowserWindow.getAllWindows()[0].id, calls };
-    }
-    const window = new BrowserWindow({
-      show: false,
-      webPreferences: {
-        preload: first.webContents.getLastWebPreferences()?.preload,
-        contextIsolation: true,
-        sandbox: true,
-        nodeIntegration: false,
-      },
-    });
-    void window.loadURL(first.webContents.getURL());
-    return { id: window.id, calls };
-  }, recreate);
+  const result = await app.evaluate(
+    ({ app, BrowserWindow }, { recreate, preload }) => {
+      const first = BrowserWindow.getAllWindows()[0];
+      const calls: { enabled: boolean; visible: boolean; url: string }[] = [];
+      app.prependOnceListener('browser-window-created', (_event, window) => {
+        const original = window.setContentProtection.bind(window);
+        window.setContentProtection = (value: boolean) => {
+          calls.push({ enabled: value, visible: window.isVisible(), url: window.webContents.getURL() });
+          original(value);
+        };
+      });
+      if (recreate) {
+        // Keep this test process alive on Windows/Linux to exercise the app's macOS activation path.
+        app.removeAllListeners('window-all-closed');
+        for (const window of BrowserWindow.getAllWindows()) window.destroy();
+        app.emit('activate');
+        return { id: BrowserWindow.getAllWindows()[0].id, calls };
+      }
+      const window = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          preload,
+          contextIsolation: true,
+          sandbox: true,
+          nodeIntegration: false,
+        },
+      });
+      void window.loadURL(first.webContents.getURL());
+      return { id: window.id, calls };
+    },
+    { recreate, preload: join(process.cwd(), 'out', 'preload', 'index.cjs') },
+  );
   expect(result.calls).toEqual(supported ? [{ enabled, visible: false, url: '' }] : []);
   return result.id;
 }
