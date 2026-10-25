@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import type { AddDriveOptions, ProtonLogin, ProviderInfo, RemoteOp, SignedIn } from '../preload/api';
 import * as P from '../shared/paths';
 import {
+  alreadyConnectedMessage,
   DEFAULT_ROOT_FOLDER,
   PROVIDER_NAMES,
   type DriveAccount,
@@ -149,9 +150,19 @@ export class DriveService {
     return (await browser.listFolders(path)).sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /**
+   * Saves a signed-in account as a new drive. An account that is already connected (Proton ids are per user)
+   * is refused: the renderer keeps that drive's sync records under its id, so replacing its folder would make
+   * every synced note look deleted on the drive and delete it locally and on the other drives.
+   */
   async addDrive(accountId: string, options: AddDriveOptions): Promise<DriveAccount> {
     const signedIn = this.pending.get(accountId);
     if (!signedIn) throw new Error('Sign in again to add this drive');
+    const state = await this.load();
+    if (state.drives.some((d) => d.id === signedIn.id)) {
+      this.pending.delete(accountId);
+      throw new Error(alreadyConnectedMessage(signedIn.label));
+    }
     const rootFolderName = options.rootFolderName.trim() || DEFAULT_ROOT_FOLDER;
     if (options.createRootFolder) P.validateName(rootFolderName);
     const account: DriveAccount = {
@@ -162,8 +173,7 @@ export class DriveService {
       createRootFolder: options.createRootFolder,
       rootFolderName,
     };
-    const state = await this.load();
-    state.drives = [...state.drives.filter((d) => d.id !== account.id), account];
+    state.drives = [...state.drives, account];
     this.stores.delete(account.id);
     await this.save();
     this.pending.delete(accountId);

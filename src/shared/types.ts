@@ -66,6 +66,10 @@ export const PROVIDER_NAMES: Record<DriveProvider, string> = {
 
 export const DEFAULT_ROOT_FOLDER = 'MarkNotes';
 
+/** Shown when a sign-in matches a drive that is already connected; the new sign-in replaced its session. */
+export const alreadyConnectedMessage = (label: string) =>
+  `${label} is already connected (its sign-in was renewed). To sync a different folder, disconnect it first.`;
+
 /** A connected cloud drive. Every connected drive mirrors the same local note tree. */
 export interface DriveAccount {
   id: string;
