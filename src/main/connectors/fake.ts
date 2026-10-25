@@ -62,6 +62,7 @@ class ScopedStore implements RemoteDriveStore {
 /** In-memory provider used only by end-to-end tests (MARKNOTES_E2E=1). */
 export class FakeConnector implements DriveConnector {
   readonly drives = new Map<string, FakeRemoteDriveStore>();
+  private signIns = 0;
 
   constructor(readonly provider: DriveProvider) {}
 
@@ -79,10 +80,26 @@ export class FakeConnector implements DriveConnector {
     return d;
   }
 
+  /** Like the real connectors: Proton ids are per user, Dropbox/OneDrive ids are new per sign-in. */
   async signIn(): Promise<SignedInAccount> {
-    const id = `${this.provider}:test`;
+    const fresh = this.provider !== 'proton' && this.signIns++ > 0;
+    return this.signedIn(`${this.provider}:test${fresh ? `-${crypto.randomUUID()}` : ''}`);
+  }
+
+  /** A staged Proton login (reconnect) is stored under a pending id, as in the real connector. */
+  async login(_username: string, _password: string, staged = false) {
+    const account = staged ? this.signedIn(`proton-pending-${crypto.randomUUID()}`) : await this.signIn();
+    return { kind: 'signedIn' as const, account };
+  }
+
+  private signedIn(id: string): SignedInAccount {
     this.drive(id);
-    return { id, provider: this.provider, label: 'test@example.com' };
+    return { id, provider: this.provider, label: 'test@example.com', providerAccountId: 'test' };
+  }
+
+  async replaceCredentials(account: DriveAccount, signedIn: SignedInAccount) {
+    if (signedIn.providerAccountId !== account.providerAccountId) throw new Error('Account mismatch');
+    this.drives.delete(signedIn.id);
   }
 
   async folderBrowser(accountId: string): Promise<RemoteFolderBrowser> {

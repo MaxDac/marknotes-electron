@@ -46,6 +46,89 @@ beforeEach(async () => {
 });
 
 describe('SyncManager', () => {
+  it.each(['dropbox', 'onedrive', 'proton'] as const)(
+    'preserves every encrypted local record and conflict when reconnecting %s, including after restart',
+    async (provider) => {
+      const drive: DriveAccount = {
+        id: 'original',
+        provider,
+        providerAccountId: 'immutable',
+        label: 'me',
+        remoteFolder: 'Documents',
+        createRootFolder: true,
+        rootFolderName: 'Personal',
+      };
+      window.marknotes.drives = async () => ({ ok: true, value: [drive] });
+      window.marknotes.reconnect = async (id, stagedId) => {
+        calls.push(`reconnect:${id}:${stagedId}`);
+        return { ok: true, value: drive };
+      };
+      const notes = new NoteStore(new IdbNodeBackend(db));
+      await notes.write(CONFLICT.path, 'note');
+      await notes.write(CONFLICT.copyPath, 'copy');
+      const settings = new Settings(db);
+      const conflict = { ...CONFLICT, driveId: drive.id };
+      await settings.set('pendingConflicts', [conflict]);
+      await settings.set('driveStatus:original', { lastSyncAt: 1234, message: 'manual removal notice' });
+      const stores = ['syncRecords', 'baseContent', 'conflictIntents', 'renameIntents'] as const;
+      for (const store of stores) {
+        await db.put(
+          store,
+          'preserved',
+          { path: 'n.md', marker: store, bytes: new Uint8Array([1, 2, 3]) },
+          drive.id,
+        );
+      }
+      const manager = new SyncManager(notes, db, settings, 'device');
+      await manager.init();
+      // Compare the encrypted records too, so accidental rekeying or rewriting cannot pass.
+      const before = await Promise.all(stores.map((store) => db.idb.getAll(store)));
+      await manager.reconnect(drive.id, 'staged');
+      expect(calls).toEqual(['reconnect:original:staged']);
+      expect(await Promise.all(stores.map((store) => db.idb.getAll(store)))).toEqual(before);
+      expect(manager.current.drives[0]).toMatchObject({
+        account: drive,
+        lastSyncAt: 1234,
+        message: 'manual removal notice',
+      });
+      const restarted = new SyncManager(notes, db, new Settings(db), 'device');
+      await restarted.init();
+      expect(restarted.current.conflicts).toEqual([conflict]);
+      expect(restarted.current.drives).toEqual(manager.current.drives);
+      expect(await Promise.all(stores.map((store) => db.idb.getAll(store)))).toEqual(before);
+    },
+  );
+
+  it('queues reconnect behind an active sync without clearing local data on failure', async () => {
+    const notes = new NoteStore(new IdbNodeBackend(db));
+    const manager = new SyncManager(notes, db, new Settings(db), 'device');
+    await manager.init();
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    manager.onBeforeSync(async () => {
+      calls.push('sync');
+      await waiting;
+    });
+    window.marknotes.reconnect = async () => {
+      calls.push('reconnect');
+      return { ok: false, error: 'Wrong account' };
+    };
+    const syncing = manager.syncNow();
+    const reconnecting = manager.reconnect(DRIVE.id, 'staged');
+    // Attach the failure handler immediately.
+    const rejected = expect(reconnecting).rejects.toThrow('Wrong account');
+    await vi.waitFor(() => expect(calls).toEqual(['sync']));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(calls).toEqual(['sync']);
+    release();
+    await syncing;
+    await rejected;
+    expect(calls.at(-1)).toBe('reconnect');
+    expect(manager.current.drives[0].account).toEqual(DRIVE);
+  });
+
   it('keeps pending conflicts across restarts until one of the files is gone', async () => {
     const notes = new NoteStore(new IdbNodeBackend(db));
     await notes.write(CONFLICT.path, 'note');

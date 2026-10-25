@@ -455,6 +455,43 @@ describe('OneDriveConnector', () => {
     expect(JSON.parse(stored.cache)).toEqual([msAccount('h1', 'me@outlook.com')]);
   });
 
+  it('reconnects an expired session, replaces the actual MSAL cache/store and survives restart', async () => {
+    const c = connector(signedIn);
+    const first = (await c.signIn())!;
+    const drive = account(first.id);
+    const store = await c.store(drive);
+    apps[0].silentError = new InteractionRequiredAuthError('invalid_grant', 'Expired');
+    await expect(store.snapshot()).rejects.toThrow(RemoteUnavailableError);
+    const staged = (await c.signIn())!;
+    await c.replaceCredentials(drive, staged);
+    const committed = vault.items.get(first.id);
+    // A detached old MSAL cache must not resurrect its old credentials after reconnect.
+    await apps[0].getTokenCache().removeAccount(msAccount('h1', 'me@outlook.com'));
+    expect(vault.items.get(first.id)).toBe(committed);
+    server.route('GET /v1.0/me/drive/root:/MarkNotes', folder('root', 'MarkNotes', 'x'));
+    server.route('GET /v1.0/me/drive/root/delta?token=latest', '{"value":[]}');
+    server.route('GET /v1.0/me/drive/items/root/children', '{"value":[]}');
+    const fresh = await c.store(drive);
+    expect(fresh).not.toBe(store);
+    expect(await fresh.snapshot()).toEqual([]);
+    expect(await (await connector().store(drive)).snapshot()).toEqual([]);
+    expect(vault.items.has(staged.id)).toBe(false);
+    expect(JSON.parse(vault.items.get(first.id)!).homeAccountId).toBe('h1');
+  });
+
+  it('rejects another account with the same username without changing either connection', async () => {
+    const c = connector(signedIn);
+    const first = (await c.signIn())!;
+    const wrong = await connector((app) => {
+      app.interactive = async () =>
+        ({ account: msAccount('h2', 'me@outlook.com'), accessToken: 'at' }) as AuthenticationResult;
+    }).signIn();
+    const original = vault.items.get(first.id);
+    const other = vault.items.get(wrong!.id);
+    await expect(c.replaceCredentials(account(first.id), wrong!)).rejects.toThrow('same OneDrive account');
+    expect(vault.items.get(first.id)).toBe(original);
+    expect(vault.items.get(wrong!.id)).toBe(other);
+  });
   it('restores the token cache from the vault to call Graph', async () => {
     const { id } = (await connector(signedIn).signIn())!;
     // A new connector, as after restarting the app.

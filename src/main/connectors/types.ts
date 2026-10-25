@@ -5,6 +5,7 @@ export interface SignedInAccount {
   id: string;
   provider: DriveProvider;
   label: string;
+  providerAccountId?: string;
 }
 
 /** Lists folders of a drive, used to pick the folder to sync. */
@@ -30,6 +31,8 @@ export interface DriveConnector {
    * stored in the vault under the returned account id. Resolves null when cancelled.
    */
   signIn(signal?: AbortSignal): Promise<SignedInAccount | null>;
+  /** Verifies a staged sign-in's immutable identity before replacing an existing drive's credentials. */
+  replaceCredentials?(account: DriveAccount, signedIn: SignedInAccount): Promise<void>;
   /** Browser for picking the folder to sync, or null when the provider has no folder listing. */
   folderBrowser(accountId: string): Promise<RemoteFolderBrowser | null>;
   /** Creates the store syncing syncFolder(account). Throws RemoteUnavailableError when signed out. */

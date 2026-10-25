@@ -112,12 +112,13 @@ export interface MarkNotesApi {
   drives(): Promise<Result<DriveAccount[]>>;
   signIn(provider: DriveProvider): Promise<Result<SignedIn | null>>;
   cancelSignIn(): Promise<Result<void>>;
-  protonLogin(username: string, password: string): Promise<Result<ProtonLogin>>;
+  protonLogin(username: string, password: string, staged?: boolean): Promise<Result<ProtonLogin>>;
   protonTwoFactor(pendingId: string, code: string): Promise<Result<SignedIn>>;
   /** Abandons a Proton login waiting for its two-factor code. */
   protonCancel(pendingId: string): Promise<Result<void>>;
   listFolders(accountId: string, path: string): Promise<Result<RemoteFolder[]>>;
   addDrive(accountId: string, options: AddDriveOptions): Promise<Result<DriveAccount>>;
+  reconnect(driveId: string, accountId: string): Promise<Result<DriveAccount>>;
   discardSignIn(accountId: string): Promise<Result<void>>;
   removeDrive(driveId: string): Promise<Result<void>>;
   remote(driveId: string, op: RemoteOp): Promise<Result<unknown>>;

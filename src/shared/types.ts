@@ -91,6 +91,8 @@ export interface DriveAccount {
   id: string;
   provider: DriveProvider;
   label: string;
+  /** Immutable provider identity, independent of the local drive id and display label. */
+  providerAccountId?: string;
   /** Folder picked by the user, relative to the drive root ("" = root). */
   remoteFolder: string;
   /** Whether the app syncs into a `rootFolderName` folder created inside `remoteFolder`. */

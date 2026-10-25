@@ -17,7 +17,7 @@ import type { DriveConnector, SignedInAccount } from './connectors/types';
 
 /** Proton-specific login steps, implemented by the Proton connector. */
 export interface ProtonLoginConnector extends DriveConnector {
-  login(username: string, password: string): Promise<ProtonLogin>;
+  login(username: string, password: string, staged?: boolean): Promise<ProtonLogin>;
   submitTwoFactor(pendingId: string, code: string): Promise<SignedInAccount>;
   cancelLogin(pendingId: string): Promise<void>;
 }
@@ -37,6 +37,7 @@ export class DriveService {
   /** Accounts that signed in but were not saved as drives yet. */
   private pending = new Map<string, SignedInAccount>();
   private signInAbort: AbortController | null = null;
+  private operations = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly file: string,
@@ -104,6 +105,10 @@ export class DriveService {
     this.signInAbort = abort;
     try {
       const account = await this.connector(provider).signIn(abort.signal);
+      if (account && abort.signal.aborted) {
+        await this.connectors[provider].signOut(account.id);
+        return null;
+      }
       return account ? this.remember(account) : null;
     } catch (e) {
       if (abort.signal.aborted) return null;
@@ -122,8 +127,8 @@ export class DriveService {
     return this.connector('proton') as ProtonLoginConnector;
   }
 
-  async protonLogin(username: string, password: string): Promise<ProtonLogin> {
-    const result = await this.proton().login(username, password);
+  async protonLogin(username: string, password: string, staged = false): Promise<ProtonLogin> {
+    const result = await this.proton().login(username, password, staged);
     return result.kind === 'signedIn' ? { kind: 'signedIn', account: this.remember(result.account) } : result;
   }
 
@@ -169,6 +174,7 @@ export class DriveService {
       id: signedIn.id,
       provider: signedIn.provider,
       label: signedIn.label,
+      ...(signedIn.providerAccountId ? { providerAccountId: signedIn.providerAccountId } : {}),
       remoteFolder: P.normalize(options.remoteFolder),
       createRootFolder: options.createRootFolder,
       rootFolderName,
@@ -190,8 +196,47 @@ export class DriveService {
     }
   }
 
+  private serial<T>(driveId: string, operation: () => Promise<T>): Promise<T> {
+    const run = (this.operations.get(driveId) ?? Promise.resolve()).then(operation, operation);
+    this.operations.set(driveId, run);
+    void run
+      .finally(() => {
+        if (this.operations.get(driveId) === run) this.operations.delete(driveId);
+      })
+      .catch(() => undefined);
+    return run;
+  }
+
+  /** Replaces credentials only: the drive configuration and every renderer sync key stay unchanged. */
+  reconnect(driveId: string, accountId: string): Promise<DriveAccount> {
+    return this.serial(driveId, async () => {
+      const state = await this.load();
+      const drive = state.drives.find((d) => d.id === driveId);
+      const staged = this.pending.get(accountId);
+      if (!drive) throw new Error('This drive is no longer connected');
+      if (!staged || state.drives.some((d) => d.id === accountId) || staged.provider !== drive.provider) {
+        throw new Error('Sign in again to reconnect this drive');
+      }
+      const connector = this.connector(drive.provider);
+      if (!connector.replaceCredentials) throw new Error('This provider does not support reconnect');
+      await connector.replaceCredentials(drive, staged);
+      this.pending.delete(accountId);
+      this.stores.delete(driveId);
+      if (drive.providerAccountId || !staged.providerAccountId) return { ...drive };
+      // Drives added before the provider identity was recorded keep it from now on.
+      const pinned: DriveAccount = { ...drive, providerAccountId: staged.providerAccountId };
+      state.drives = state.drives.map((d) => (d.id === driveId ? pinned : d));
+      await this.save();
+      return { ...pinned };
+    });
+  }
+
   /** Disconnects a drive. Nothing is deleted from the drive; local sync data is cleared by the renderer. */
-  async removeDrive(driveId: string) {
+  removeDrive(driveId: string) {
+    return this.serial(driveId, () => this.removeDriveNow(driveId));
+  }
+
+  private async removeDriveNow(driveId: string) {
     const state = await this.load();
     const drive = state.drives.find((d) => d.id === driveId);
     if (!drive) return;
@@ -207,13 +252,20 @@ export class DriveService {
       const drive = (await this.load()).drives.find((d) => d.id === driveId);
       if (!drive) throw new Error('This drive is no longer connected');
       store = this.connector(drive.provider).store(drive);
-      store.catch(() => this.stores.delete(driveId));
+      const creating = store;
+      store.catch(() => {
+        if (this.stores.get(driveId) === creating) this.stores.delete(driveId);
+      });
       this.stores.set(driveId, store);
     }
     return store;
   }
 
-  async remote(driveId: string, request: RemoteOp): Promise<unknown> {
+  remote(driveId: string, request: RemoteOp): Promise<unknown> {
+    return this.serial(driveId, () => this.remoteNow(driveId, request));
+  }
+
+  private async remoteNow(driveId: string, request: RemoteOp): Promise<unknown> {
     const store = await this.store(driveId);
     switch (request.op) {
       case 'snapshot':

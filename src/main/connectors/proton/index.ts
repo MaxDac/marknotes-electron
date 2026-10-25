@@ -30,6 +30,7 @@ export interface ProtonConnectorDeps {
 }
 
 interface PendingLogin {
+  staged: boolean;
   session: ProtonSession;
   password: string;
   timer: ReturnType<typeof setTimeout>;
@@ -70,16 +71,16 @@ export class ProtonConnector implements DriveConnector {
   }
 
   /** Logs in with SRP. Resolves `twoFactor` when a TOTP code must be sent with submitTwoFactor(). */
-  async login(username: string, password: string): Promise<ProtonLoginResult> {
+  async login(username: string, password: string, staged = false): Promise<ProtonLoginResult> {
     const result = await this.auth.login(username.trim(), password);
     if (result.kind === 'twoFactorRequired') {
       const pendingId = randomUUID();
       const timer = setTimeout(() => void this.cancelLogin(pendingId), PENDING_LOGIN_TTL_MS);
       timer.unref?.();
-      this.pending.set(pendingId, { session: result.session, password, timer });
+      this.pending.set(pendingId, { session: result.session, password, timer, staged });
       return { kind: 'twoFactor', pendingId };
     }
-    return { kind: 'signedIn', account: await this.complete(result.session, password) };
+    return { kind: 'signedIn', account: await this.complete(result.session, password, staged) };
   }
 
   /** Sends the TOTP code. An invalid code throws and keeps the login pending so the user can retry. */
@@ -87,9 +88,13 @@ export class ProtonConnector implements DriveConnector {
     const pending = this.pending.get(pendingId);
     if (!pending) throw new ProtonApiError(0, 'The login expired, please log in again.');
     const session = await this.auth.submitTwoFactor(pending.session, code);
+    if (this.pending.get(pendingId) !== pending) {
+      await this.auth.logoutQuietly(session);
+      throw new ProtonApiError(0, 'The login expired, please log in again.');
+    }
     this.pending.delete(pendingId);
     clearTimeout(pending.timer);
-    return this.complete(session, pending.password);
+    return this.complete(session, pending.password, pending.staged);
   }
 
   /** Forgets a login waiting for its two-factor code (and the password it holds), logging the session out. */
@@ -139,25 +144,49 @@ export class ProtonConnector implements DriveConnector {
   async signOut(accountId: string): Promise<void> {
     const session =
       this.holders.get(accountId)?.current ?? sessionFromJson((await this.vault.get(accountId)) ?? '');
+    this.holders.get(accountId)?.detach();
     this.holders.delete(accountId);
     this.stores.delete(accountId);
     if (session) await this.auth.logoutQuietly(session);
     await this.vault.delete(accountId);
   }
 
-  private async complete(session: ProtonSession, password: string): Promise<SignedInAccount> {
+  async replaceCredentials(account: DriveAccount, signedIn: SignedInAccount): Promise<void> {
+    const raw = await this.vault.get(signedIn.id);
+    const fresh = raw ? sessionFromJson(raw) : null;
+    const old = sessionFromJson((await this.vault.get(account.id)) ?? '');
+    const expected =
+      account.providerAccountId ||
+      old?.userId ||
+      (account.id.startsWith('proton:') ? account.id.slice('proton:'.length) : '');
+    if (!expected || !fresh?.userId || fresh.userId !== expected) {
+      throw new Error('Sign in to the same Proton account to reconnect');
+    }
+    await this.vault.set(account.id, sessionToJson(fresh));
+    await this.vault.delete(signedIn.id);
+    this.holders.get(account.id)?.detach();
+    this.holders.delete(account.id);
+    this.stores.delete(account.id);
+    if (old && old.uid !== fresh.uid) await this.auth.logoutQuietly(old);
+  }
+
+  private async complete(session: ProtonSession, password: string, staged = false): Promise<SignedInAccount> {
     let keyPassphrases: Record<string, string> = {};
     try {
       keyPassphrases = await this.auth.fetchKeyPassphrases(session, password);
-    } catch {
+    } catch (error) {
+      if (staged) {
+        await this.auth.logoutQuietly(session);
+        throw error;
+      }
       // Non-fatal, as on Android: syncing then asks to sign in again.
     }
     const saved: ProtonSession = { ...session, keyPassphrases };
-    const id = accountIdFor(saved);
+    const id = staged ? `proton-pending-${randomUUID()}` : accountIdFor(saved);
     await this.vault.set(id, sessionToJson(saved));
     this.holders.delete(id);
     this.stores.delete(id);
-    return { id, provider: this.provider, label: saved.username };
+    return { id, provider: this.provider, label: saved.username, providerAccountId: saved.userId };
   }
 
   private async holder(accountId: string): Promise<ProtonSessionHolder> {

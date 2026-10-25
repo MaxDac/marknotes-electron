@@ -167,6 +167,50 @@ test('foreground reconnect downloads notes only after opt-in and a new network t
   }
 });
 
+for (const provider of ['Dropbox', 'OneDrive', 'Proton Drive']) {
+  test(`reconnects ${provider} without a folder chooser or changing the drive configuration`, async () => {
+    const userData = newUserData();
+    const { app, page } = await launch(userData);
+    const signIn = async () => {
+      await page.getByRole('button', { name: provider, exact: true }).click();
+      if (provider === 'Proton Drive') {
+        await expect(
+          page.getByText('This is a third-party application not officially supported by Proton.'),
+        ).toBeVisible();
+        await page.getByLabel('Username or email').fill('test@example.com');
+        await page.getByLabel('Password', { exact: true }).fill('secret');
+        await page.getByRole('button', { name: 'Log in', exact: true }).click();
+      }
+    };
+    try {
+      await page.getByRole('button', { name: 'Settings' }).click();
+      await page.getByRole('button', { name: 'Add drive' }).click();
+      await signIn();
+      if (provider === 'Proton Drive') {
+        await page.getByLabel('Folder in My files').fill('Personal notes');
+      } else {
+        await page.getByTestId('folder-picker').getByText('Documents').click();
+        await page.getByLabel('Folder name', { exact: true }).fill('Personal notes');
+      }
+      await page.getByRole('button', { name: 'Connect', exact: true }).click();
+      await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Sync now', exact: true })).toBeEnabled();
+      const before = await page.evaluate(() => window.marknotes.drives());
+      await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+      await expect(page.getByRole('heading', { name: 'Reconnect drive' })).toBeVisible();
+      await signIn();
+      await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+      await expect(page.getByTestId('folder-picker')).toHaveCount(0);
+      expect(await page.evaluate(() => window.marknotes.drives())).toEqual(before);
+      await expect(page.getByTestId('drive')).toContainText('Personal notes');
+      await expect(page.getByRole('button', { name: 'Sync now', exact: true })).toBeEnabled();
+    } finally {
+      await app.close();
+      rmSync(userData, { recursive: true, force: true });
+    }
+  });
+}
+
 test('notes, folders, editor and preview persist across restarts', async () => {
   const userData = newUserData();
   let { app, page } = await launch(userData);

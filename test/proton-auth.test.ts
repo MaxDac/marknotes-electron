@@ -272,7 +272,7 @@ describe('ProtonConnector', () => {
     const result = await connector.login('alice', PASSWORD);
     expect(result).toEqual({
       kind: 'signedIn',
-      account: { id: 'proton:user', provider: 'proton', label: 'alice' },
+      account: { id: 'proton:user', provider: 'proton', label: 'alice', providerAccountId: 'user' },
     });
     const raw = (await vault.get('proton:user'))!;
     expect(raw).not.toContain(PASSWORD);
@@ -295,6 +295,72 @@ describe('ProtonConnector', () => {
     await expect(connector.submitTwoFactor(result.pendingId, '123456')).rejects.toBeInstanceOf(
       ProtonApiError,
     );
+  });
+
+  it('stages reconnect until immutable UserID validation, without overwriting either connected account', async () => {
+    await connector.login('alice', PASSWORD);
+    const original = (await vault.get('proton:user'))!;
+    const drive: DriveAccount = {
+      id: 'proton:user',
+      provider: 'proton',
+      label: 'old email',
+      remoteFolder: 'Notes',
+      createRootFolder: false,
+      rootFolderName: 'Kept',
+    };
+    server.twoFactorEnabled = 1;
+    const login = await connector.login('alice', PASSWORD, true);
+    if (login.kind !== 'twoFactor') throw new Error('Expected two-factor login');
+    const staged = await connector.submitTwoFactor(login.pendingId, '123456');
+    expect(staged.id).not.toBe(drive.id);
+    expect(await vault.get(drive.id)).toBe(original);
+    await vault.set('proton:other', original.replace('"userId":"user"', '"userId":"other"'));
+    const other = await vault.get('proton:other');
+    await expect(connector.replaceCredentials({ ...drive, id: 'proton:other' }, staged)).rejects.toThrow(
+      'same Proton account',
+    );
+    expect(await vault.get('proton:other')).toBe(other);
+    expect(await vault.get(drive.id)).toBe(original);
+    await connector.replaceCredentials(drive, staged);
+    expect(sessionFromJson((await vault.get(drive.id))!)!.userId).toBe('user');
+    expect(await vault.get(staged.id)).toBeNull();
+  });
+
+  it('does not replace the original session when staged SRP or key retrieval fails', async () => {
+    await connector.login('alice', PASSWORD);
+    const original = await vault.get('proton:user');
+    await expect(connector.login('alice', 'wrong password', true)).rejects.toThrow();
+    expect(await vault.get('proton:user')).toBe(original);
+    const keys = vi
+      .spyOn(ProtonAuthClient.prototype, 'fetchKeyPassphrases')
+      .mockRejectedValue(new Error('Keys unavailable'));
+    try {
+      await expect(connector.login('alice', PASSWORD, true)).rejects.toThrow('Keys unavailable');
+      expect(await vault.get('proton:user')).toBe(original);
+    } finally {
+      keys.mockRestore();
+    }
+  });
+
+  it('keeps the original credentials when a staged two-factor reconnect is cancelled or expires', async () => {
+    await connector.login('alice', PASSWORD);
+    const original = await vault.get('proton:user');
+    server.twoFactorEnabled = 1;
+    const cancelled = await connector.login('alice', PASSWORD, true);
+    if (cancelled.kind !== 'twoFactor') throw new Error('Expected two-factor login');
+    await connector.cancelLogin(cancelled.pendingId);
+    await expect(connector.submitTwoFactor(cancelled.pendingId, '123456')).rejects.toThrow();
+    expect(await vault.get('proton:user')).toBe(original);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const expired = await connector.login('alice', PASSWORD, true);
+      if (expired.kind !== 'twoFactor') throw new Error('Expected two-factor login');
+      await vi.advanceTimersByTimeAsync(PENDING_LOGIN_TTL_MS);
+      await expect(connector.submitTwoFactor(expired.pendingId, '123456')).rejects.toThrow();
+      expect(await vault.get('proton:user')).toBe(original);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('cancelLogin logs the pending session out', async () => {

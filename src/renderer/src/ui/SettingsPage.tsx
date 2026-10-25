@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { cleanUnusedAttachments } from '../../../shared/attachments';
-import { PROVIDER_NAMES, syncFolder } from '../../../shared/types';
+import { PROVIDER_NAMES, syncFolder, type DriveAccount } from '../../../shared/types';
 import logo from '../../../../branding/marknotes-mark.svg';
 import type { Page } from '../App';
 import { api } from '../data/api';
 import type { DriveStatus } from '../data/syncManager';
 import { AppLockSettings } from './AppLockSettings';
+import { AddDrive } from './AddDrive';
 import { CaptureProtectionSettings } from './CaptureProtectionSettings';
 import { ConfirmDialog } from './Dialog';
 import { DiagnosticsSettings } from './DiagnosticsSettings';
@@ -27,6 +28,7 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
   } = useApp();
   const state = useSyncState();
   const [disconnect, setDisconnect] = useState<DriveStatus | null>(null);
+  const [reconnect, setReconnect] = useState<DriveAccount | null>(null);
   const [confirmClean, setConfirmClean] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [cleanMessage, setCleanMessage] = useState<string | null>(null);
@@ -37,6 +39,8 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
   const [reconnectError, setReconnectError] = useState<string | null>(null);
   const [savingReconnect, setSavingReconnect] = useState(false);
   const lastDrive = state.drives.length === 1;
+
+  if (reconnect) return <AddDrive reconnect={reconnect} onDone={() => setReconnect(null)} />;
 
   return (
     <>
@@ -66,6 +70,9 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
                   {drive.message && <div className="small">{drive.message}</div>}
                   {drive.unavailableReason && <div className="error small">{drive.unavailableReason}</div>}
                 </div>
+                <button disabled={!!drive.unavailableReason} onClick={() => setReconnect(drive.account)}>
+                  Reconnect
+                </button>
                 <button className="danger" onClick={() => setDisconnect(drive)}>
                   Disconnect
                 </button>

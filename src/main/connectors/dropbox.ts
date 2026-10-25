@@ -29,7 +29,10 @@ export const DROPBOX_SCOPES = [
   'files.content.write',
 ];
 
-const SIGN_IN_AGAIN = 'Sign in to Dropbox again';
+const SIGN_IN_AGAIN = 'Dropbox sign-in expired, reconnect this drive in Settings';
+const LEGACY_UNVERIFIABLE =
+  'This Dropbox drive was connected by an older MarkNotes version and its sign-in no longer works, so the ' +
+  'account cannot be verified. Disconnect the drive and add it again.';
 
 /** Tagged union value as returned by the Dropbox API (`{".tag": "...", ...}`). */
 interface Tagged {
@@ -120,7 +123,8 @@ export class DropboxClient {
       if (response.ok) return response;
       if (response.status === 401) {
         await response.body?.cancel();
-        if (attempt > 0) throw new RemoteUnavailableError('Dropbox session expired, sign in again');
+        if (attempt > 0)
+          throw new RemoteUnavailableError('Dropbox session expired, reconnect this drive in Settings');
         token = await this.tokens.refresh();
         continue;
       }
@@ -409,6 +413,7 @@ export const dropboxTime = (millis: number) => new Date(millis).toISOString().re
 
 /** What is stored in the vault for a Dropbox account. */
 export interface DropboxCredential {
+  accountId?: string;
   refreshToken: string;
   accessToken: string;
   /** Epoch millis after which accessToken is expired. */
@@ -441,6 +446,16 @@ class DropboxSession implements DropboxTokens {
     return this.refresh();
   }
 
+  get accountIdentity(): string | undefined {
+    return this.credential.accountId;
+  }
+
+  /** Stores the Dropbox account_id in a credential saved before it was recorded, so reconnect can verify it. */
+  async pinAccountIdentity(dropboxAccountId: string) {
+    this.credential = { ...this.credential, accountId: dropboxAccountId };
+    if (this.accountId && !this.closed) await this.vault.set(this.accountId, JSON.stringify(this.credential));
+  }
+
   refresh(): Promise<string> {
     this.refreshing ??= this.doRefresh().finally(() => (this.refreshing = null));
     return this.refreshing;
@@ -463,6 +478,7 @@ class DropboxSession implements DropboxTokens {
     if (!response.ok) throw new Error(`Dropbox token refresh failed: HTTP ${response.status}`);
     const token = (await response.json()) as TokenResponse;
     this.credential = {
+      accountId: this.credential.accountId,
       refreshToken: token.refresh_token ?? this.credential.refreshToken,
       accessToken: token.access_token,
       expiresAt: Date.now() + (token.expires_in ?? 14_400) * 1000,
@@ -537,13 +553,18 @@ export class DropboxConnector implements DriveConnector {
         new DropboxSession(null, credential, this.deps.appKey, this.deps.vault, this.fetchFn),
         this.fetchFn,
       );
-      const account = await client.rpc<{ email?: string; name?: { display_name?: string } }>(
-        'users/get_current_account',
-      );
+      const account = await client.rpc<{
+        account_id?: string;
+        email?: string;
+        name?: { display_name?: string };
+      }>('users/get_current_account');
+      if (!account.account_id) throw new Error('Dropbox sign-in returned no account ID');
+      credential.accountId = account.account_id;
       const label = account.email?.trim() || account.name?.display_name || 'Dropbox';
       const id = `dropbox-${crypto.randomUUID()}`;
+      if (signal?.aborted) return null;
       await this.deps.vault.set(id, JSON.stringify(credential));
-      return { id, provider: this.provider, label };
+      return { id, provider: this.provider, label, providerAccountId: account.account_id };
     } finally {
       redirect.close();
     }
@@ -581,13 +602,60 @@ export class DropboxConnector implements DriveConnector {
     return new DropboxFolderBrowser(await this.client(accountId));
   }
 
+  async replaceCredentials(account: DriveAccount, signedIn: SignedInAccount): Promise<void> {
+    const raw = await this.deps.vault.get(signedIn.id);
+    if (!raw) throw new Error('Sign in again to reconnect this drive');
+    const fresh = JSON.parse(raw) as DropboxCredential;
+    let expected = account.providerAccountId;
+    if (!expected) {
+      const old = await this.deps.vault.get(account.id);
+      const credential = old ? (JSON.parse(old) as DropboxCredential) : null;
+      expected = credential?.accountId;
+      if (!expected) {
+        // Legacy credentials never stored account_id. Only the old authenticated session can attest it.
+        if (!credential) throw new Error('Cannot verify this legacy Dropbox account safely');
+        const verifier = new DropboxClient(
+          new DropboxSession(null, credential, this.deps.appKey, this.deps.vault, this.fetchFn),
+          this.fetchFn,
+        );
+        try {
+          expected = (await verifier.rpc<{ account_id?: string }>('users/get_current_account')).account_id;
+        } catch (error) {
+          if (error instanceof RemoteUnavailableError) throw new Error(LEGACY_UNVERIFIABLE, { cause: error });
+          throw error;
+        }
+      }
+    }
+    if (!expected) throw new Error(LEGACY_UNVERIFIABLE);
+    if (fresh.accountId !== expected) throw new Error('Sign in to the same Dropbox account to reconnect');
+    await this.deps.vault.set(account.id, raw);
+    await this.deps.vault.delete(signedIn.id);
+    const old = this.sessions.get(account.id);
+    if (old) old.session.closed = true;
+    this.sessions.delete(account.id);
+    this.stores.delete(account.id);
+  }
+
   async store(account: DriveAccount): Promise<RemoteDriveStore> {
     const folder = syncFolder(account);
     const cached = this.stores.get(account.id);
     if (cached && cached.folder === folder) return cached.store;
     const store = new DropboxDriveStore(await this.client(account.id), folder);
     this.stores.set(account.id, { folder, store });
+    await this.pinLegacyIdentity(account.id);
     return store;
+  }
+
+  /** Best effort: a failure leaves the credential as it was and is retried with the next store. */
+  private async pinLegacyIdentity(accountId: string) {
+    const cached = this.sessions.get(accountId);
+    if (!cached || cached.session.accountIdentity) return;
+    try {
+      const me = await cached.client.rpc<{ account_id?: string }>('users/get_current_account');
+      if (me?.account_id) await cached.session.pinAccountIdentity(me.account_id);
+    } catch {
+      // The sync reports an expired sign-in on its own requests.
+    }
   }
 
   async signOut(accountId: string): Promise<void> {
