@@ -250,7 +250,8 @@ test('imports typed and pasted text with a title, a folder and optional formatti
     await expect(dialog.getByTestId('markdown-preview').locator('h1')).toHaveText('Article');
     await expect(dialog.getByLabel('Title')).toHaveValue('Article');
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await expect(page.getByTestId('entry')).toHaveCount(2);
+    // The tree also lists the Imports folder, so count notes only.
+    await expect(page.locator('[data-testid="entry"][data-kind]')).toHaveCount(2);
     await expect(page.getByTestId('entry').filter({ hasText: 'Groceries 2' })).toHaveCount(1);
   });
 });

@@ -1,4 +1,5 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { Icon, type IconName } from './icons';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
@@ -73,18 +74,24 @@ function mentionAt(state: EditorState): Mention | null {
   return findMention(line.text.substring(0, sel.head - line.from), line.from);
 }
 
-const TOOLBAR: { label: string; text: string; action(v: E.EditorText): E.EditorText }[] = [
-  { label: 'Bold', text: 'B', action: (v) => E.toggleInline(v, '**') },
-  { label: 'Italic', text: 'I', action: (v) => E.toggleInline(v, '*') },
-  { label: 'Strikethrough', text: 'S̶', action: (v) => E.toggleInline(v, '~~') },
-  { label: 'Heading', text: 'H', action: E.cycleHeading },
-  { label: 'Bullet list', text: '•', action: (v) => E.toggleLinePrefix(v, 'bullet') },
-  { label: 'Numbered list', text: '1.', action: (v) => E.toggleLinePrefix(v, 'numbered') },
-  { label: 'Checkbox', text: '☐', action: (v) => E.toggleLinePrefix(v, 'checkbox') },
-  { label: 'Quote', text: '❝', action: (v) => E.toggleLinePrefix(v, 'quote') },
-  { label: 'Inline code', text: '<>', action: (v) => E.toggleInline(v, '`') },
-  { label: 'Code block', text: '{ }', action: E.toggleCodeBlock },
-  { label: 'Link', text: '🔗', action: E.insertLink },
+/** A toolbar button shows a text glyph (as on the web) or an icon. */
+const TOOLBAR: {
+  label: string;
+  glyph?: string;
+  icon?: IconName;
+  action(v: E.EditorText): E.EditorText;
+}[] = [
+  { label: 'Bold', glyph: 'B', action: (v) => E.toggleInline(v, '**') },
+  { label: 'Italic', glyph: 'I', action: (v) => E.toggleInline(v, '*') },
+  { label: 'Strikethrough', glyph: 'S', action: (v) => E.toggleInline(v, '~~') },
+  { label: 'Heading', glyph: 'H', action: E.cycleHeading },
+  { label: 'Bullet list', icon: 'list', action: (v) => E.toggleLinePrefix(v, 'bullet') },
+  { label: 'Numbered list', icon: 'numbered', action: (v) => E.toggleLinePrefix(v, 'numbered') },
+  { label: 'Checkbox', icon: 'checklist', action: (v) => E.toggleLinePrefix(v, 'checkbox') },
+  { label: 'Quote', icon: 'quote', action: (v) => E.toggleLinePrefix(v, 'quote') },
+  { label: 'Inline code', icon: 'code', action: (v) => E.toggleInline(v, '`') },
+  { label: 'Code block', icon: 'block', action: E.toggleCodeBlock },
+  { label: 'Link', icon: 'link', action: E.insertLink },
 ];
 
 const editorTheme = EditorView.theme({
@@ -94,6 +101,8 @@ const editorTheme = EditorView.theme({
     backgroundColor: 'color-mix(in srgb, var(--primary) 30%, transparent) !important',
   },
   '.cm-gutters': { display: 'none' },
+  '.cm-content': { padding: '24px 0' },
+  '.cm-line': { padding: '0 32px' },
 });
 
 /**
@@ -432,14 +441,16 @@ export function Editor(props: {
         <span className="title" data-testid="note-title">
           {P.displayName(props.path)}
         </span>
-        {(['edit', 'split', 'preview'] as const).map((m) => (
-          <button key={m} className={mode === m ? 'selected' : ''} onClick={() => setMode(m)}>
-            {m === 'edit' ? 'Edit' : m === 'split' ? 'Split' : 'Preview'}
-          </button>
-        ))}
+        <div className="segmented">
+          {(['edit', 'split', 'preview'] as const).map((m) => (
+            <button key={m} className={mode === m ? 'selected' : ''} onClick={() => setMode(m)}>
+              {m === 'edit' ? 'Edit' : m === 'split' ? 'Split' : 'Preview'}
+            </button>
+          ))}
+        </div>
         {props.headerExtra}
-        <button className="icon" aria-label="Close" onClick={props.onClose}>
-          ✕
+        <button className="icon" aria-label="Close" title="Close" onClick={props.onClose}>
+          <Icon name="close" />
         </button>
       </div>
       {props.notice}
@@ -454,7 +465,7 @@ export function Editor(props: {
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => view.current && apply(view.current, t.action(current(view.current)))}
             >
-              {t.text}
+              {t.icon ? <Icon name={t.icon} /> : <span className={`glyph glyph-${t.glyph}`}>{t.glyph}</span>}
             </button>
           ))}
           <button
@@ -464,7 +475,7 @@ export function Editor(props: {
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => fileInput.current?.click()}
           >
-            🖼
+            <Icon name="image" />
           </button>
           <input
             ref={fileInput}
@@ -485,7 +496,7 @@ export function Editor(props: {
         <div className="status error" role="alert">
           {error}
           <button className="icon" aria-label="Dismiss" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" />
           </button>
         </div>
       )}

@@ -1,4 +1,5 @@
 import type { ConflictChoice, MergeResult } from '@marknotes/sync';
+import { Icon } from './icons';
 import { mergeText } from '@marknotes/sync';
 import { useEffect, useState } from 'react';
 import * as P from '../../../shared/paths';
@@ -22,7 +23,7 @@ export function Conflicts(props: { onBack(): void }) {
     <>
       <div className="topbar">
         <button className="icon" aria-label="Back" onClick={props.onBack}>
-          ←
+          <Icon name="back" />
         </button>
         <h1>Sync conflicts</h1>
       </div>

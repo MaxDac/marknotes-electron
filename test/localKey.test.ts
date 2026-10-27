@@ -7,9 +7,9 @@ import { LocalKeyManager, type LocalKeyOptions } from '../src/main/localKey';
 import type { Encryptor } from '../src/main/vault';
 
 const encryptor: Encryptor = {
-  isEncryptionAvailable: () => true,
-  encryptString: (plain) => Buffer.from(`wrapped:${plain}`, 'utf8'),
-  decryptString: (encrypted) => {
+  isEncryptionAvailable: async () => true,
+  encryptString: async (plain) => Buffer.from(`wrapped:${plain}`, 'utf8'),
+  decryptString: async (encrypted) => {
     const text = Buffer.from(encrypted).toString('utf8');
     if (!text.startsWith('wrapped:')) throw new Error('bad');
     return text.slice('wrapped:'.length);
@@ -63,7 +63,7 @@ describe('LocalKeyManager', () => {
   it('reports an unreadable key', async () => {
     const keys = manager();
     await keys.init();
-    const broken = manager({ encryptor: { ...encryptor, decryptString: () => 'short' } });
+    const broken = manager({ encryptor: { ...encryptor, decryptString: async () => 'short' } });
     await broken.init();
     expect(broken.status().state).toBe('error');
     expect(() => broken.key()).toThrow('Locked');

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Icon } from './icons';
 import {
   chordDisplayNames,
   emptyChord,
@@ -290,7 +291,7 @@ export function ChordEditor(props: { path: string; onClose(): void; onViewAsText
     <section className="editor-pane chord-editor" aria-label="Chord editor" data-testid="chord-editor">
       <div className="editor-header">
         <span className="title" data-testid="note-title">
-          🎸 {P.displayName(props.path)}
+          <Icon name="chords" /> {P.displayName(props.path)}
         </span>
         <button
           data-testid="view-as-text"
@@ -303,14 +304,14 @@ export function ChordEditor(props: { path: string; onClose(): void; onViewAsText
           aria-label="Close"
           onClick={() => guard('Discard the unsaved changes to the current chord?', props.onClose)}
         >
-          ✕
+          <Icon name="close" />
         </button>
       </div>
       {error && (
         <div className="status error" role="alert">
           {error}
           <button className="icon" aria-label="Dismiss" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" />
           </button>
         </div>
       )}
@@ -448,7 +449,7 @@ export function ChordEditor(props: { path: string; onClose(): void; onViewAsText
                   {chord.note && <div className="small chord-card-note">{chord.note}</div>}
                   <div className="chord-card-actions">
                     <button className="icon" aria-label="Edit" title="Edit" onClick={() => editChord(index)}>
-                      ✎
+                      <Icon name="pencil" />
                     </button>
                     <button
                       className="icon"
@@ -456,7 +457,7 @@ export function ChordEditor(props: { path: string; onClose(): void; onViewAsText
                       title="Duplicate"
                       onClick={() => duplicateChord(index)}
                     >
-                      ⧉
+                      <Icon name="copy" />
                     </button>
                     <button
                       className="icon"
@@ -465,7 +466,7 @@ export function ChordEditor(props: { path: string; onClose(): void; onViewAsText
                       disabled={index === 0}
                       onClick={() => moveChord(index, -1)}
                     >
-                      ↑
+                      <Icon name="up" />
                     </button>
                     <button
                       className="icon"
@@ -474,7 +475,7 @@ export function ChordEditor(props: { path: string; onClose(): void; onViewAsText
                       disabled={index === chords.length - 1}
                       onClick={() => moveChord(index, 1)}
                     >
-                      ↓
+                      <Icon name="down" />
                     </button>
                     <button
                       className="icon danger"
@@ -482,7 +483,7 @@ export function ChordEditor(props: { path: string; onClose(): void; onViewAsText
                       title="Delete"
                       onClick={() => deleteChord(index)}
                     >
-                      🗑
+                      <Icon name="trash" />
                     </button>
                   </div>
                 </li>
