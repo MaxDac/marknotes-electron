@@ -174,6 +174,21 @@ package's official installer. Both steps are safe to repeat, and installation fa
 Production-only installs (`npm ci --omit=dev`) skip the development runtime; use `npm ci --include=dev`
 to restore development tools.
 
+#### Troubleshooting `npm ci` / `npm i`
+
+`@marknotes/sync` is compiled from source by its `prepare` script during install, using the Rust toolchain pinned by
+its `rust-toolchain.toml` (1.99.1), **not** your default toolchain. Installing rustup alone is not enough: run the two
+`rustup`/`cargo` commands above, and use `npm ci` (plain `npm i` rewrites `package-lock.json`).
+
+| Error                                                                           | Cause and fix                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `can't find crate for 'core'` / ``the `wasm32-unknown-unknown` target may ...`` | The target is missing on the pinned toolchain. `rustup target add wasm32-unknown-unknown` only affects the default toolchain and may report "up to date" while this still fails. Run `rustup target add wasm32-unknown-unknown --toolchain 1.99.1`. |
+| `spawnSync wasm-bindgen ENOENT`                                                 | The wasm-bindgen CLI is missing or not on `PATH` (add `~/.cargo/bin`). Run `cargo install wasm-bindgen-cli --version 0.2.129 --locked`; its version must match the core's `wasm-bindgen` crate.                                                     |
+| `linker 'cc' not found`                                                         | Install a C/C++ toolchain (for example `build-essential` on Debian/Ubuntu).                                                                                                                                                                         |
+
+Run `rustup show` to see the installed toolchains and targets. After a `@marknotes/sync` update, re-check the Rust
+and wasm-bindgen versions the core pins.
+
 Both `dev` and `preview` open a desktop Electron window, not a browser preview server. Preview builds all bundles
 by default; `npm run preview -- --skipBuild` opens an existing build. If an older installation reports
 `Electron uninstall` or a missing Electron executable, run `npm exec -- install-electron` to download the pinned
