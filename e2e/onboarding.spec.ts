@@ -164,7 +164,8 @@ test('Help and demo preserve a real editor draft, selection, undo, mode and fold
   await expect(editor.locator('.cm-placeholder')).toBeVisible();
   await expect(editor).not.toContainText('real draft');
   await expect(page.locator('.tree-row.current')).toContainText('Work');
-  await expect(page.getByTestId('entry')).toHaveCount(1);
+  // The tree lists the Work folder as well as the note.
+  await expect(page.locator('[data-testid="entry"][data-kind]')).toHaveCount(1);
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await replay(page);
   await page.getByRole('button', { name: 'Skip', exact: true }).click();

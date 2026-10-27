@@ -199,7 +199,6 @@ test('notes, folders, editor and preview persist across restarts', async ({ laun
     .click();
   await page.getByRole('menuitem', { name: 'Move to…' }).click();
   await page.getByRole('dialog').getByText('All notes').click();
-  await expect(page.getByText('No notes here yet')).toBeVisible();
   await page.getByRole('navigation', { name: 'Folders' }).getByText('All notes').click();
   await expect(page.getByTestId('entry').filter({ hasText: 'Roadmap' })).toBeVisible();
 
@@ -285,7 +284,7 @@ test('empty states offer to create a note or a chord sequence', async ({ launch 
   await page.getByRole('textbox', { name: 'Name' }).fill('Riffs');
   await page.getByRole('button', { name: 'Create' }).click();
   await expect(page.getByTestId('chord-editor')).toBeVisible();
-  await expect(page.getByTestId('entry').filter({ hasText: 'Riffs' })).toContainText('🎸');
+  await expect(page.getByTestId('entry').filter({ hasText: 'Riffs' })).toHaveAttribute('data-kind', 'chords');
 });
 
 test('bass fret 12 marker is rendered after the fret without changing guitar or other frets', async ({
@@ -354,7 +353,7 @@ test('chord sequences open in the chord editor and fall back to text on parse er
   await page.getByRole('button', { name: 'Create' }).click();
   const chordEditor = page.getByTestId('chord-editor');
   await expect(chordEditor).toBeVisible();
-  await expect(page.getByTestId('entry').filter({ hasText: 'Songs' })).toContainText('🎸');
+  await expect(page.getByTestId('entry').filter({ hasText: 'Songs' })).toHaveAttribute('data-kind', 'chords');
 
   // Too few strings first, then a C major shape.
   await page.getByTestId('chord-name').fill('C');

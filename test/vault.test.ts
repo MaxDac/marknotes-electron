@@ -12,31 +12,31 @@ import {
 } from '../src/main/vault';
 
 const encryptor = (available = true, backend?: string): Encryptor => ({
-  isEncryptionAvailable: () => available,
-  encryptString: (plain) => Buffer.from(plain, 'utf8').reverse(),
-  decryptString: (encrypted) => Buffer.from(encrypted).reverse().toString('utf8'),
+  isEncryptionAvailable: async () => available,
+  encryptString: async (plain) => Buffer.from(plain, 'utf8').reverse(),
+  decryptString: async (encrypted) => Buffer.from(encrypted).reverse().toString('utf8'),
   ...(backend === undefined ? {} : { getSelectedStorageBackend: () => backend }),
 });
 
 describe('secureStorageStatus', () => {
-  it('is unavailable without encryption', () => {
-    expect(secureStorageStatus(encryptor(false), 'darwin')).toBe('unavailable');
+  it('is unavailable without encryption', async () => {
+    expect(await secureStorageStatus(encryptor(false), 'darwin')).toBe('unavailable');
   });
 
-  it('is secure on macOS and Windows', () => {
-    expect(secureStorageStatus(encryptor(), 'darwin')).toBe('secure');
-    expect(secureStorageStatus(encryptor(), 'win32')).toBe('secure');
+  it('is secure on macOS and Windows', async () => {
+    expect(await secureStorageStatus(encryptor(), 'darwin')).toBe('secure');
+    expect(await secureStorageStatus(encryptor(), 'win32')).toBe('secure');
   });
 
-  it('is weak on Linux without a keyring', () => {
-    expect(secureStorageStatus(encryptor(true, 'basic_text'), 'linux')).toBe('weak');
-    expect(secureStorageStatus(encryptor(true, 'unknown'), 'linux')).toBe('weak');
-    expect(secureStorageStatus(encryptor(true), 'linux')).toBe('weak');
+  it('is weak on Linux without a keyring', async () => {
+    expect(await secureStorageStatus(encryptor(true, 'basic_text'), 'linux')).toBe('weak');
+    expect(await secureStorageStatus(encryptor(true, 'unknown'), 'linux')).toBe('weak');
+    expect(await secureStorageStatus(encryptor(true), 'linux')).toBe('weak');
   });
 
-  it('is secure on Linux with a keyring', () => {
-    expect(secureStorageStatus(encryptor(true, 'gnome_libsecret'), 'linux')).toBe('secure');
-    expect(secureStorageStatus(encryptor(true, 'kwallet5'), 'linux')).toBe('secure');
+  it('is secure on Linux with a keyring', async () => {
+    expect(await secureStorageStatus(encryptor(true, 'gnome_libsecret'), 'linux')).toBe('secure');
+    expect(await secureStorageStatus(encryptor(true, 'kwallet5'), 'linux')).toBe('secure');
   });
 });
 

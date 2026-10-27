@@ -87,7 +87,7 @@ export class LocalKeyManager {
         this.stored = JSON.parse(await readFile(this.file, 'utf8')) as KeyFile;
         if (this.stored.mode === 'keychain') {
           this.dek = Buffer.from(
-            this.encryptor().decryptString(Buffer.from(this.stored.data, 'base64')),
+            await (await this.encryptor()).decryptString(Buffer.from(this.stored.data, 'base64')),
             'base64',
           );
         } else if (this.stored.mode === 'none') {
@@ -148,7 +148,7 @@ export class LocalKeyManager {
       const { dek } = await this.unwrap(file, passphrase);
       this.dek = dek;
       this.kek = null;
-      await this.save(this.wrapDefault(dek));
+      await this.save(await this.wrapDefault(dek));
       return this.status();
     });
   }
@@ -187,7 +187,7 @@ export class LocalKeyManager {
         await this.save(this.seal(dek, this.kek.key, this.kek.salt, this.kek.scrypt));
       } else {
         this.kek = null;
-        await this.save(this.wrapDefault(dek));
+        await this.save(await this.wrapDefault(dek));
       }
       this.dek?.fill(0);
       this.dek = dek;
@@ -198,7 +198,7 @@ export class LocalKeyManager {
 
   private async create() {
     const dek = randomBytes(KEY_BYTES);
-    await this.save(this.wrapDefault(dek));
+    await this.save(await this.wrapDefault(dek));
     this.dek = dek;
   }
 
@@ -207,18 +207,19 @@ export class LocalKeyManager {
     return this.dek;
   }
 
-  private encryptor(): Encryptor {
+  private async encryptor(): Promise<Encryptor> {
     const encryptor = this.options.encryptor;
-    if (!encryptor?.isEncryptionAvailable()) throw new Error('Secure storage is not available');
+    if (!encryptor || !(await encryptor.isEncryptionAvailable()))
+      throw new Error('Secure storage is not available');
     return encryptor;
   }
 
-  private wrapDefault(dek: Buffer): KeyFile {
+  private async wrapDefault(dek: Buffer): Promise<KeyFile> {
     if (this.options.defaultProtection === 'keychain') {
       return {
         v: 1,
         mode: 'keychain',
-        data: this.encryptor().encryptString(dek.toString('base64')).toString('base64'),
+        data: (await (await this.encryptor()).encryptString(dek.toString('base64'))).toString('base64'),
       };
     }
     return { v: 1, mode: 'none', data: dek.toString('base64') };

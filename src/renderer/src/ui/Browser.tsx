@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { isChordSequence } from '../../../shared/chords';
 import type { NoteEntry } from '../../../shared/noteStore';
 import * as P from '../../../shared/paths';
@@ -10,6 +10,7 @@ import { NoteEditor } from './ChordEditor';
 import { errorMessage, useApp, useNotesVersion, useSyncState } from './context';
 import { ImportDialog, type ImportRequest } from './ImportDialog';
 import { kindOf } from '../../../shared/importing/prepareImport';
+import { Icon } from './icons';
 
 type DialogState =
   | { kind: 'newNote' }
@@ -35,6 +36,9 @@ const treeOrder = (a: string, b: string) => {
 const formatDate = (millis: number) =>
   new Date(millis).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
+/** Indent of a tree row: the web app uses 16px per level. */
+const indent = (depth: number) => ({ paddingLeft: depth * 16 });
+
 export function Browser(props: {
   navigate(page: Page): void;
   hidden: boolean;
@@ -46,13 +50,15 @@ export function Browser(props: {
   const version = useNotesVersion();
   const [folder, setFolder] = useState('');
   const [openNote, setOpenNote] = useState<string | null>(null);
-  const [entries, setEntries] = useState<NoteEntry[]>([]);
+  const [notesByFolder, setNotesByFolder] = useState<Record<string, NoteEntry[]>>({});
   const [chordPaths, setChordPaths] = useState<Set<string>>(new Set());
   const [folders, setFolders] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<{ entry: NoteEntry; x: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState(false);
+  const chordCache = useRef(new Map<string, { modified: number; chord: boolean }>());
   const { onBlockingChange } = props;
 
   useEffect(() => onBlockingChange(dialog !== null || menu !== null), [dialog, menu, onBlockingChange]);
@@ -65,15 +71,34 @@ export function Browser(props: {
         if (!cancelled) setFolder('');
         return;
       }
-      const [list, all] = await Promise.all([notes.list(folder), notes.listFolders()]);
-      if (cancelled) return;
-      setEntries(list);
-      const chordFlags = await Promise.all(
-        list.map((e) => (e.isFolder ? false : notes.read(e.path).then(isChordSequence, () => false))),
+      const all = (await notes.listFolders()).sort(treeOrder);
+      const lists = await Promise.all(
+        ['', ...all].map(
+          async (f) => [f, (await notes.list(f)).filter((e) => !e.isFolder)] as [string, NoteEntry[]],
+        ),
       );
       if (cancelled) return;
-      setChordPaths(new Set(list.filter((_, i) => chordFlags[i]).map((e) => e.path)));
-      setFolders(all.sort(treeOrder));
+      const cache = chordCache.current;
+      const flags = new Set<string>();
+      await Promise.all(
+        lists
+          .flatMap(([, list]) => list)
+          .map(async (e) => {
+            let known = cache.get(e.path);
+            if (known?.modified !== e.modifiedMillis) {
+              known = {
+                modified: e.modifiedMillis,
+                chord: await notes.read(e.path).then(isChordSequence, () => false),
+              };
+              cache.set(e.path, known);
+            }
+            if (known.chord) flags.add(e.path);
+          }),
+      );
+      if (cancelled) return;
+      setNotesByFolder(Object.fromEntries(lists));
+      setChordPaths(flags);
+      setFolders(all);
       if (openNote && !(await notes.exists(openNote)) && !cancelled) setOpenNote(null);
     })();
     return () => {
@@ -89,12 +114,6 @@ export function Browser(props: {
       setError(errorMessage(e));
     }
   }, []);
-
-  const visibleFolders = useMemo(
-    () => folders.filter((f) => ![...collapsed].some((c) => P.isAncestor(c, f) && c !== '')),
-    [folders, collapsed],
-  );
-  const hasChildren = (path: string) => folders.some((f) => P.parent(f) === path);
 
   const followMove = (from: string, to: string) => {
     if (openNote && (openNote === from || P.isAncestor(from, openNote))) {
@@ -116,23 +135,133 @@ export function Browser(props: {
   const createActions = (testIdPrefix: string) => (
     <div className="empty-actions">
       <button
-        className="filled"
+        className="btn btn-solid"
         data-testid={`${testIdPrefix}-new-note`}
         onClick={() => setDialog({ kind: 'newNote' })}
       >
+        <Icon name="plus" />
         New note
       </button>
       {chordSequences && (
-        <button data-testid={`${testIdPrefix}-new-chords`} onClick={() => setDialog({ kind: 'newChords' })}>
+        <button
+          className="btn btn-outline"
+          data-testid={`${testIdPrefix}-new-chords`}
+          onClick={() => setDialog({ kind: 'newChords' })}
+        >
+          <Icon name="chords" />
           New chord sequence
         </button>
       )}
     </div>
   );
 
+  const toggleCollapsed = (path: string) => {
+    const next = new Set(collapsed);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    setCollapsed(next);
+  };
+
+  const openMenu = (entry: NoteEntry, x: number, y: number) => setMenu({ entry, x, y });
+
+  const moreButton = (entry: NoteEntry) => (
+    <button
+      className="btn btn-icon row-more"
+      aria-label="More"
+      title="More"
+      onClick={(e) => {
+        e.stopPropagation();
+        const r = e.currentTarget.getBoundingClientRect();
+        openMenu(entry, r.left, r.bottom);
+      }}
+    >
+      <Icon name="more" />
+    </button>
+  );
+
+  /** The folders and notes inside `parent`: folders first, as the tree of the web app. */
+  const renderLevel = (parent: string, depth: number): ReactNode[] => {
+    const rows: ReactNode[] = [];
+    for (const f of folders.filter((g) => P.parent(g) === parent)) {
+      const expandable = folders.some((g) => P.parent(g) === f) || (notesByFolder[f] ?? []).length > 0;
+      const isCollapsed = collapsed.has(f);
+      const entry: NoteEntry = { path: f, isFolder: true, modifiedMillis: 0, size: 0 };
+      rows.push(
+        <div
+          key={`folder:${f}`}
+          className={`tree-row ${folder === f ? 'current' : ''}`}
+          data-testid="entry"
+          style={indent(depth)}
+          onClick={() => setFolder(f)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            openMenu(entry, e.clientX, e.clientY);
+          }}
+          title={f}
+        >
+          <span
+            className="expander"
+            role={expandable ? 'button' : undefined}
+            aria-label={expandable ? (isCollapsed ? 'Expand' : 'Collapse') : undefined}
+            aria-expanded={expandable ? !isCollapsed : undefined}
+            onClick={(e) => {
+              if (!expandable) return;
+              e.stopPropagation();
+              toggleCollapsed(f);
+            }}
+          >
+            {expandable && <Icon name="chevron" />}
+          </span>
+          <span className="icon-slot">
+            <Icon name="folder" />
+          </span>
+          <span className="label">{P.name(f)}</span>
+          {moreButton(entry)}
+        </div>,
+      );
+      if (!isCollapsed) rows.push(...renderLevel(f, depth + 1));
+    }
+    for (const entry of notesByFolder[parent] ?? []) {
+      const chords = chordPaths.has(entry.path);
+      rows.push(
+        <div
+          key={`note:${entry.path}`}
+          className={`entry ${entry.path === openNote ? 'open' : ''}`}
+          data-testid="entry"
+          data-kind={chords ? 'chords' : 'note'}
+          style={indent(depth)}
+          title={formatDate(entry.modifiedMillis)}
+          onClick={() => {
+            setDrawer(false);
+            void requestOpen(entry.path);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            openMenu(entry, e.clientX, e.clientY);
+          }}
+        >
+          <span className="expander" />
+          <span className="icon-slot">
+            <Icon name={chords ? 'chords' : 'file'} />
+          </span>
+          <span className="label">{P.displayName(entry.path)}</span>
+          {moreButton(entry)}
+        </div>,
+      );
+    }
+    return rows;
+  };
+
+  const noteCount = Object.values(notesByFolder).reduce((n, list) => n + list.length, 0);
+  const breadcrumb = openNote
+    ? [...P.parent(openNote).split('/').filter(Boolean), P.displayName(openNote)].join(' / ')
+    : folder === ''
+      ? 'All notes'
+      : P.name(folder);
+
   return (
     <div
-      className="app"
+      className="app browser"
       style={props.hidden ? { display: 'none' } : undefined}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) e.preventDefault();
@@ -150,164 +279,171 @@ export function Browser(props: {
         setDialog({ kind: 'import', request: { files, clipboard: null } });
       }}
     >
-      <div className="topbar">
-        <h1>
-          <img src={logo} alt="" className="logo" />
-          MarkNotes
-        </h1>
-        <button
-          className="filled"
-          data-testid="new-note"
-          data-tour="new-note"
-          onClick={() => setDialog({ kind: 'newNote' })}
-        >
-          New note
-        </button>
-        {chordSequences && (
-          <button data-testid="new-chords" onClick={() => setDialog({ kind: 'newChords' })}>
-            New chord sequence
-          </button>
-        )}
-        <button onClick={() => setDialog({ kind: 'newFolder' })}>New folder</button>
-        <button
-          data-testid="import"
-          data-tour="import"
-          onClick={() => setDialog({ kind: 'import', request: null })}
-        >
-          Import…
-        </button>
-        <div className="spacer" />
-        {syncState.conflicts.length > 0 && (
-          <button className="danger" onClick={() => props.navigate('conflicts')}>
-            Sync conflicts<span className="badge">{syncState.conflicts.length}</span>
-          </button>
-        )}
-        {folderNotices > 0 && (
-          <button data-testid="folder-notices" onClick={() => props.navigate('settings')}>
-            Folders to remove<span className="badge">{folderNotices}</span>
-          </button>
-        )}
-        {syncState.drives.length > 0 && (
-          <button disabled={syncState.running} onClick={() => void sync.syncNow()}>
-            {syncState.running ? 'Syncing…' : 'Sync now'}
-          </button>
-        )}
-        <button data-tour="settings" onClick={() => props.navigate('settings')}>
-          Settings
-        </button>
-        <button
-          data-tour="help"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => props.navigate('help')}
-        >
-          Help
-        </button>
-      </div>
-      {(syncState.message || error) && (
-        <div className="status" data-testid="status">
-          {error ? <span className="error">{error}</span> : syncState.message}
-        </div>
-      )}
-      <div className="main">
-        <nav className="sidebar" aria-label="Folders" data-tour="folders">
-          <h2>Folders</h2>
-          <div className={`tree-row ${folder === '' ? 'current' : ''}`} onClick={() => setFolder('')}>
-            <span className="toggle" />
-            <span className="label">All notes</span>
+      <div className={`main ${drawer ? 'sidebar-open' : ''}`}>
+        <aside className="sidebar">
+          <div className="brand">
+            <img src={logo} alt="" className="logo" />
+            <h1 className="wordmark">MarkNotes</h1>
           </div>
-          {visibleFolders.map((f) => {
-            const expandable = hasChildren(f);
-            const isCollapsed = collapsed.has(f);
-            return (
-              <div
-                key={f}
-                className={`tree-row ${folder === f ? 'current' : ''}`}
-                style={{ paddingLeft: 4 + (P.depth(f) - 1) * 14 }}
-                onClick={() => setFolder(f)}
-                title={f}
+          <button
+            className="btn btn-solid btn-new"
+            data-testid="new-note"
+            data-tour="new-note"
+            onClick={() => setDialog({ kind: 'newNote' })}
+          >
+            <Icon name="plus" />
+            New note
+          </button>
+          <div className="sidebar-actions">
+            {chordSequences && (
+              <button
+                className="btn btn-ghost nav-item"
+                data-testid="new-chords"
+                onClick={() => setDialog({ kind: 'newChords' })}
               >
-                <span
-                  className="toggle"
-                  role={expandable ? 'button' : undefined}
-                  aria-label={expandable ? (isCollapsed ? 'Expand' : 'Collapse') : undefined}
-                  onClick={(e) => {
-                    if (!expandable) return;
-                    e.stopPropagation();
-                    const next = new Set(collapsed);
-                    if (isCollapsed) next.delete(f);
-                    else next.add(f);
-                    setCollapsed(next);
-                  }}
-                >
-                  {expandable ? (isCollapsed ? '▸' : '▾') : ''}
-                </span>
-                <span className="label">📁 {P.name(f)}</span>
-              </div>
-            );
-          })}
-        </nav>
-        <section className="list" aria-label="Notes">
-          <div className="list-header">
-            {folder !== '' && (
-              <button className="icon" aria-label="Back" onClick={() => setFolder(P.parent(folder))}>
-                ←
+                <Icon name="chords" />
+                <span>New chord sequence</span>
               </button>
             )}
-            <span className="crumb">{folder === '' ? 'All notes' : P.name(folder)}</span>
+            <button className="btn btn-ghost nav-item" onClick={() => setDialog({ kind: 'newFolder' })}>
+              <Icon name="folder" />
+              <span>New folder</span>
+            </button>
+            <button
+              className="btn btn-ghost nav-item"
+              data-testid="import"
+              data-tour="import"
+              onClick={() => setDialog({ kind: 'import', request: null })}
+            >
+              <Icon name="import" />
+              <span>Import…</span>
+            </button>
           </div>
-          <div className="entries">
-            {entries.length === 0 && (
-              <div className="empty">
+          <nav className="tree" aria-label="Folders" data-tour="folders">
+            <div className={`tree-row ${folder === '' ? 'current' : ''}`} onClick={() => setFolder('')}>
+              <span className="expander" />
+              <span className="icon-slot">
+                <Icon name="notes" />
+              </span>
+              <span className="label">All notes</span>
+            </div>
+            {renderLevel('', 0)}
+            {noteCount === 0 && folders.length === 0 && (
+              <div className="empty tree-empty">
                 No notes here yet
                 {createActions('empty')}
               </div>
             )}
-            {entries.map((entry) => (
+          </nav>
+          <div className="drives">
+            <div className="section-title">Drives</div>
+            {syncState.drives.map((d) => (
               <div
-                key={entry.path}
-                className={`entry ${entry.path === openNote ? 'open' : ''}`}
-                data-testid="entry"
-                onClick={() => (entry.isFolder ? setFolder(entry.path) : void requestOpen(entry.path))}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setMenu({ entry, x: e.clientX, y: e.clientY });
-                }}
+                key={d.account.id}
+                className="drive-row"
+                title={d.unavailableReason ?? d.message ?? d.account.label}
               >
-                <span>{entry.isFolder ? '📁' : chordPaths.has(entry.path) ? '🎸' : '📄'}</span>
-                <span className="name">
-                  {P.displayName(entry.path)}
-                  {!entry.isFolder && <div className="meta">{formatDate(entry.modifiedMillis)}</div>}
+                <span className={`cloud-badge ${d.unavailableReason ? 'warn' : ''}`}>
+                  <Icon name="cloud" />
                 </span>
-                <button
-                  className="icon"
-                  aria-label="More"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const r = e.currentTarget.getBoundingClientRect();
-                    setMenu({ entry, x: r.left, y: r.bottom });
-                  }}
-                >
-                  ⋮
-                </button>
+                <span className="label">{d.account.label}</span>
               </div>
             ))}
+            {syncState.drives.length === 0 && (
+              <div className="small hint">Your notes are stored on this device only.</div>
+            )}
+            <button
+              className="btn btn-ghost connect-item nav-item"
+              onClick={() => props.navigate('addDrive')}
+            >
+              <Icon name="plug" />
+              <span>Connect a drive</span>
+            </button>
           </div>
-        </section>
-        {openNote ? (
-          <NoteEditor
-            key={openNote}
-            path={openNote}
-            onClose={() => setOpenNote(null)}
-            onOpenNote={(path) => void requestOpen(path)}
-          />
-        ) : (
-          <div className="editor-pane">
-            <div className="empty">
-              Select a note or create a new one.
-              {createActions('pane')}
+        </aside>
+        {drawer && <div className="scrim" onClick={() => setDrawer(false)} />}
+        <div className="content">
+          <div className="topbar">
+            <button
+              className="btn btn-icon menu-toggle"
+              aria-label="Show folders"
+              title="Show folders"
+              onClick={() => setDrawer(true)}
+            >
+              <Icon name="menu" />
+            </button>
+            <div className="breadcrumb">{breadcrumb}</div>
+            {(syncState.message || error) && (
+              <div className="status" data-testid="status">
+                {error ? <span className="error">{error}</span> : syncState.message}
+              </div>
+            )}
+            <div className="top-actions">
+              {syncState.conflicts.length > 0 && (
+                <button className="btn btn-outline danger" onClick={() => props.navigate('conflicts')}>
+                  <Icon name="alert" />
+                  Sync conflicts<span className="badge">{syncState.conflicts.length}</span>
+                </button>
+              )}
+              {folderNotices > 0 && (
+                <button
+                  className="btn btn-outline"
+                  data-testid="folder-notices"
+                  onClick={() => props.navigate('settings')}
+                >
+                  Folders to remove<span className="badge">{folderNotices}</span>
+                </button>
+              )}
+              {syncState.drives.length > 0 && (
+                <button
+                  className="btn btn-outline"
+                  disabled={syncState.running}
+                  onClick={() => void sync.syncNow()}
+                >
+                  <Icon name="refresh" />
+                  {syncState.running ? 'Syncing…' : 'Sync now'}
+                </button>
+              )}
+              <button
+                className="btn btn-icon"
+                aria-label="Settings"
+                title="Settings"
+                data-tour="settings"
+                onClick={() => props.navigate('settings')}
+              >
+                <Icon name="sliders" />
+              </button>
+              <button
+                className="btn btn-outline"
+                data-tour="help"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => props.navigate('help')}
+              >
+                <Icon name="help" />
+                Help
+              </button>
             </div>
           </div>
-        )}
+          {openNote ? (
+            <NoteEditor
+              key={openNote}
+              path={openNote}
+              onClose={() => setOpenNote(null)}
+              onOpenNote={(path) => void requestOpen(path)}
+            />
+          ) : (
+            <div className="editor-pane">
+              <div className="empty empty-state">
+                <div className="empty-art">
+                  <Icon name="notes" />
+                </div>
+                <h2>Choose or create a note</h2>
+                <p>Select a note in the sidebar, or start a new one.</p>
+                {createActions('pane')}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {menu && (
@@ -461,7 +597,8 @@ function MoveDialog(props: {
               props.onClose();
             }}
           >
-            {t === '' ? 'All notes' : `📁 ${P.name(t)}`}
+            <Icon name={t === '' ? 'notes' : 'folder'} />
+            {t === '' ? 'All notes' : P.name(t)}
           </div>
         ))}
       </div>

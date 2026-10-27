@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Icon } from './icons';
 import type { ProviderInfo, SignedIn } from '../../../preload/api';
 import * as P from '../../../shared/paths';
 import {
@@ -99,7 +100,7 @@ export function AddDrive(props: { onDone(): void; reconnect?: DriveAccount }) {
     <>
       <div className="topbar">
         <button className="icon" aria-label="Back" disabled={committing} onClick={leave}>
-          ←
+          <Icon name="back" />
         </button>
         <h1>
           {props.reconnect
@@ -372,7 +373,7 @@ function FolderStep(props: {
           <div className="row">
             {path !== '' && (
               <button className="icon" aria-label="Up" onClick={() => setPath(P.parent(path))}>
-                ←
+                <Icon name="back" />
               </button>
             )}
             <strong>Folder: /{path}</strong>
@@ -382,7 +383,7 @@ function FolderStep(props: {
             {folders?.length === 0 && <div className="empty">No sub-folders</div>}
             {folders?.map((f) => (
               <div key={f.path} className="entry" onClick={() => setPath(f.path)}>
-                📁 {f.name}
+                <Icon name="folder" /> {f.name}
               </div>
             ))}
           </div>

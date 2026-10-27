@@ -13,7 +13,13 @@ import { Conflicts } from './ui/Conflicts';
 import { LockScreen } from './ui/LockScreen';
 import { AppContext, errorMessage, type AppServices } from './ui/context';
 import { SettingsPage } from './ui/SettingsPage';
-import { applyTheme, type ThemeColor, type ThemeMode } from './ui/theme';
+import {
+  applyTheme,
+  DEFAULT_THEME_COLOR,
+  normalizeThemeColor,
+  type ThemeColor,
+  type ThemeMode,
+} from './ui/theme';
 import { UpdateBanner } from './ui/UpdateBanner';
 import { HelpPage } from './ui/HelpPage';
 import { FirstAccessGuide } from './ui/FirstAccessGuide';
@@ -46,7 +52,7 @@ async function load(): Promise<Loaded> {
     sync,
     settings,
     mode: await settings.get<ThemeMode>('themeMode', 'system'),
-    color: await settings.get<ThemeColor>('themeColor', 'blue'),
+    color: normalizeThemeColor(await settings.get<unknown>('themeColor', DEFAULT_THEME_COLOR)),
     chordSequences: await loadChordSequencesEnabled(settings),
     idleMinutes: await settings.get<number>('lockIdleMinutes', DEFAULT_IDLE_MINUTES),
     syncOnReconnect: (await settings.get<unknown>(RECONNECT_SETTING, false)) === true,

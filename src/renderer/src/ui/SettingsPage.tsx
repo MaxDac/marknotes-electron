@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Icon } from './icons';
 import { cleanUnusedAttachments } from '../../../shared/attachments';
 import { PROVIDER_NAMES, syncFolder, type DriveAccount } from '../../../shared/types';
 import logo from '../../../../branding/marknotes-mark.svg';
@@ -46,7 +47,7 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
     <>
       <div className="topbar">
         <button className="icon" aria-label="Back" onClick={() => props.navigate('notes')}>
-          ←
+          <Icon name="back" />
         </button>
         <h1>Settings</h1>
       </div>
@@ -175,7 +176,7 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
                   aria-label={PALETTES[c].label}
                   title={PALETTES[c].label}
                   className={`swatch ${theme.color === c ? 'selected' : ''}`}
-                  style={{ background: PALETTES[c].light }}
+                  style={{ background: PALETTES[c].accent }}
                   onClick={() => setTheme(theme.mode, c)}
                 />
               ))}
