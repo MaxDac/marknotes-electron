@@ -440,7 +440,7 @@ describe('ProtonHttpClient', () => {
           ? json(200, { Code: 1000, AccessToken: 'new', RefreshToken: 'rt2' })
           : json(refreshStatus, { Code: 10013, Error: 'Invalid refresh token' });
       }
-      if (url.startsWith('https://storage.test')) return new Response('blob');
+      if (new URL(url).hostname === 'storage.test') return new Response('blob');
       return headers.get('authorization') === 'Bearer new'
         ? json(200, { Code: 1000, Value: 42 })
         : json(401, { Code: 401, Error: 'Unauthorized' });
