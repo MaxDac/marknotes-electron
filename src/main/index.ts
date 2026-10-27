@@ -28,7 +28,7 @@ import { DiagnosticsStore } from './diagnostics';
 import { LocalKeyManager } from './localKey';
 import { isAppUrl, isTrustedSender } from './security';
 import { loadElectronUpdater, UpdateController } from './updater';
-import { createSecretVault, secureStorageStatus, type SecureStorageStatus } from './vault';
+import { createSecretVault, secureStorageStatus, type Encryptor, type SecureStorageStatus } from './vault';
 
 // Test and development switches only apply to unpackaged builds, never to an installed app.
 const devEnv = (name: string) => (app.isPackaged ? undefined : process.env[name]);
@@ -72,6 +72,14 @@ function clearDiagnostics() {
 
 const diagnosticsDirectory = () => join(app.getPath('userData'), 'diagnostics');
 
+/** `safeStorage` through its asynchronous API; data written by the deprecated synchronous calls stays readable. */
+const encryptor: Encryptor = {
+  isEncryptionAvailable: () => safeStorage.isAsyncEncryptionAvailable(),
+  encryptString: (plain) => safeStorage.encryptStringAsync(plain),
+  decryptString: async (encrypted) => (await safeStorage.decryptStringAsync(encrypted)).result,
+  getSelectedStorageBackend: () => safeStorage.getSelectedStorageBackend(),
+};
+
 const openExternal = async (url: string) => {
   if (!/^https?:\/\//i.test(url)) throw new Error('Only web links can be opened');
   await shell.openExternal(url);
@@ -92,14 +100,14 @@ async function createService(): Promise<{
       onedrive: new FakeConnector('onedrive'),
     };
   } else {
-    storage = secureStorageStatus(safeStorage);
-    const vault = await createSecretVault(join(userData, 'credentials.bin'), safeStorage, storage);
+    storage = await secureStorageStatus(encryptor);
+    const vault = await createSecretVault(join(userData, 'credentials.bin'), encryptor, storage);
     connectors = createConnectors({ vault, openExternal });
   }
   // Without a keychain that protects anything (and in e2e runs) the local key is stored as is: see the README.
   const keys = new LocalKeyManager(join(userData, 'localkey.bin'), {
     defaultProtection: !e2e && storage === 'secure' ? 'keychain' : 'none',
-    encryptor: safeStorage,
+    encryptor,
   });
   await keys.init();
   return { service: new DriveService(join(userData, 'drives.json'), connectors), storage, keys };

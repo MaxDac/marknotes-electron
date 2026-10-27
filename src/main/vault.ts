@@ -5,9 +5,9 @@ import type { SecureStorageStatus } from '../preload/api';
 import type { SecretVault } from './connectors/types';
 
 export interface Encryptor {
-  isEncryptionAvailable(): boolean;
-  encryptString(plain: string): Buffer;
-  decryptString(encrypted: Buffer): string;
+  isEncryptionAvailable(): Promise<boolean>;
+  encryptString(plain: string): Promise<Buffer>;
+  decryptString(encrypted: Buffer): Promise<string>;
   /** Linux only: the keyring Chromium picked (`basic_text` means a hardcoded password, i.e. no protection). */
   getSelectedStorageBackend?(): string;
 }
@@ -18,11 +18,11 @@ export interface Encryptor {
  */
 export type { SecureStorageStatus };
 
-export function secureStorageStatus(
+export async function secureStorageStatus(
   encryptor: Encryptor,
   platform: NodeJS.Platform = process.platform,
-): SecureStorageStatus {
-  if (!encryptor.isEncryptionAvailable()) return 'unavailable';
+): Promise<SecureStorageStatus> {
+  if (!(await encryptor.isEncryptionAvailable())) return 'unavailable';
   if (platform === 'linux') {
     const backend = encryptor.getSelectedStorageBackend?.() ?? 'unknown';
     if (backend === 'basic_text' || backend === 'unknown') return 'weak';
@@ -40,8 +40,8 @@ export class FileSecretVault implements SecretVault {
     private readonly encryptor: Encryptor,
   ) {}
 
-  private ensureAvailable() {
-    if (!this.encryptor.isEncryptionAvailable()) {
+  private async ensureAvailable() {
+    if (!(await this.encryptor.isEncryptionAvailable())) {
       throw new Error('Secure storage is not available on this system, so credentials cannot be saved.');
     }
   }
@@ -49,9 +49,9 @@ export class FileSecretVault implements SecretVault {
   private async load(): Promise<Record<string, string>> {
     if (this.cache) return this.cache;
     if (!existsSync(this.file)) return (this.cache = {});
-    this.ensureAvailable();
+    await this.ensureAvailable();
     try {
-      this.cache = JSON.parse(this.encryptor.decryptString(await readFile(this.file))) as Record<
+      this.cache = JSON.parse(await this.encryptor.decryptString(await readFile(this.file))) as Record<
         string,
         string
       >;
@@ -62,10 +62,10 @@ export class FileSecretVault implements SecretVault {
   }
 
   private async save(data: Record<string, string>) {
-    this.ensureAvailable();
+    await this.ensureAvailable();
     await mkdir(dirname(this.file), { recursive: true });
     const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, this.encryptor.encryptString(JSON.stringify(data)));
+    await writeFile(tmp, await this.encryptor.encryptString(JSON.stringify(data)));
     await rename(tmp, this.file);
   }
 
