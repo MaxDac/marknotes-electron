@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DiagnosticsStore } from '../src/main/diagnostics';
@@ -30,6 +39,43 @@ beforeEach(() => {
   now = Date.now();
 });
 afterEach(() => rmSync(directory, { recursive: true, force: true }));
+
+describe('replacing the records file', () => {
+  const denied = (code: string) => () => {
+    throw Object.assign(new Error(code), { code });
+  };
+
+  it('retries a rename that Windows denies while a reader holds the file', () => {
+    let calls = 0;
+    const store = new DiagnosticsStore(
+      directory,
+      () => now,
+      (from, to) => {
+        if (calls++ < 2) denied('EPERM')();
+        renameSync(from, to);
+      },
+    );
+    store.record('SAVE_FAILED');
+    expect(calls).toBe(3);
+    expect(readFileSync(recordsFile(), 'utf8')).toBe(
+      JSON.stringify({ time: now, code: 'SAVE_FAILED' }) + '\n',
+    );
+  });
+
+  it('writes in place and leaves no temporary file when the rename keeps failing', () => {
+    const store = new DiagnosticsStore(directory, () => now, denied('EBUSY'));
+    store.record('SAVE_FAILED');
+    expect(readFileSync(recordsFile(), 'utf8')).toBe(
+      JSON.stringify({ time: now, code: 'SAVE_FAILED' }) + '\n',
+    );
+    expect(readdirSync(directory)).toEqual(['errors.jsonl']);
+  });
+
+  it('does not hide other rename errors', () => {
+    const store = new DiagnosticsStore(directory, () => now, denied('ENOSPC'));
+    expect(() => store.record('SAVE_FAILED')).toThrow('ENOSPC');
+  });
+});
 
 describe('local diagnostic retention and sanitization', () => {
   it('only stores timestamp and allowlisted code, reconstructing input without metadata', () => {

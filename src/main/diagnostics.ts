@@ -20,6 +20,8 @@ import {
   type DiagnosticRecord,
 } from '../shared/diagnostics';
 
+const RENAME_RETRIES = 5;
+
 /** Synchronous writes also work in a fatal exception handler; no raw exception ever crosses this boundary. */
 export class DiagnosticsStore {
   private readonly file: string;
@@ -27,6 +29,7 @@ export class DiagnosticsStore {
   constructor(
     private readonly directory: string,
     private readonly now = Date.now,
+    private readonly rename = renameSync,
   ) {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     this.file = join(directory, 'errors.jsonl');
@@ -65,8 +68,25 @@ export class DiagnosticsStore {
 
   private save(records: DiagnosticRecord[]) {
     const temp = `${this.file}.tmp`;
-    writeFileSync(temp, records.map((r) => JSON.stringify(r) + '\n').join(''), { mode: 0o600 });
-    renameSync(temp, this.file);
+    const content = records.map((r) => JSON.stringify(r) + '\n').join('');
+    writeFileSync(temp, content, { mode: 0o600 });
+    // Windows refuses to replace a file another process (a reader, antivirus) holds open: retry, then write in place.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        this.rename(temp, this.file);
+        return;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw error;
+        if (attempt >= RENAME_RETRIES) break;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10 * (attempt + 1));
+      }
+    }
+    try {
+      writeFileSync(this.file, content, { mode: 0o600 });
+    } finally {
+      unlinkSync(temp);
+    }
   }
 
   private prune(exporting = false, code?: DiagnosticCode): DiagnosticRecord[] {
