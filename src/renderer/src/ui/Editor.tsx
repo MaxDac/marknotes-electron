@@ -4,7 +4,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
 import { Compartment, EditorSelection, EditorState, Prec } from '@codemirror/state';
-import { EditorView, keymap, placeholder, type ViewUpdate } from '@codemirror/view';
+import { drawSelection, EditorView, keymap, placeholder, type ViewUpdate } from '@codemirror/view';
 import { getCM, vim } from '@replit/codemirror-vim';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { IMAGE_TYPES, imageMarkdown } from '../../../shared/attachments';
@@ -383,6 +383,7 @@ export function Editor(props: {
               markdown({ base: markdownLanguage, codeLanguages: languages }),
               syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
               EditorView.lineWrapping,
+              drawSelection(),
               placeholder('Write markdown… Type @ to link a note.'),
               editorTheme,
               EditorView.contentAttributes.of({ 'data-testid': 'editor-field', 'aria-label': 'Note' }),
