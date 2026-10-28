@@ -280,6 +280,29 @@ Proton Drive needs no keys.
 
 Linux builds are x64 only: `MarkNotes-X.Y.Z-linux-x86_64.AppImage` and `MarkNotes-X.Y.Z-linux-amd64.deb`.
 
+#### Install script
+
+[`scripts/install-linux.sh`](scripts/install-linux.sh) installs the AppImage with a desktop entry and icon for the
+current user (no root needed). It always installs the **latest release** (pre-releases included) and checks the download
+against the release's `SHA256SUMS`.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MaxDac/marknotes-electron/main/scripts/install-linux.sh | bash
+```
+
+Choose a release with `--version` (or `MARKNOTES_VERSION`), and remove the app with `--uninstall`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MaxDac/marknotes-electron/main/scripts/install-linux.sh | bash -s -- --version 0.2.0
+curl -fsSL https://raw.githubusercontent.com/MaxDac/marknotes-electron/main/scripts/install-linux.sh | bash -s -- --uninstall
+```
+
+It needs `curl` and `sha256sum`, and supports Linux x86_64 only. Files go to `~/.local/opt/marknotes/MarkNotes.AppImage`,
+`~/.local/bin/marknotes`, `~/.local/share/applications/marknotes.desktop` and the hicolor icon folder. Run it again to
+update; the AppImage also updates itself. The Ubuntu 23.10+ sandbox note below applies.
+
+#### Packages
+
 - The deb (package `marknotes-desktop`) installs to `/opt/MarkNotes`, adds the `marknotes` command and a desktop entry,
   and installs an AppArmor profile so the Chromium sandbox works on Ubuntu 24.04. It does not update itself.
 - The AppImage updates itself (`latest-linux.yml` points to it). Ubuntu 23.10 and later restrict unprivileged user
