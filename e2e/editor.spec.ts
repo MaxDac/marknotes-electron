@@ -100,3 +100,38 @@ test('a link to a missing note is marked as broken and reports it when opened', 
   await working.click();
   await expect(page.getByTestId('note-title')).toHaveText('Target');
 });
+
+test('vim mode is off by default and, once enabled, edits with Vim gestures', async ({ launch }) => {
+  const { page } = await launch();
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const toggle = page.getByRole('switch', { name: 'Vim mode' });
+  await expect(toggle).not.toBeChecked();
+  await toggle.check();
+  await page.getByRole('button', { name: 'Back' }).click();
+
+  await createNote(page, 'Vim');
+  await page.getByTestId('editor-field').click();
+  // Normal mode first: "i" enters insert mode instead of typing a letter.
+  await page.keyboard.press('Escape');
+  await page.keyboard.type('ihello world');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => editorText(page)).toBe('hello world');
+  await page.keyboard.type('0x');
+  await expect.poll(() => editorText(page)).toBe('ello world');
+  await page.keyboard.type('yyp');
+  await expect.poll(() => editorText(page)).toBe('ello world\nello world');
+  await page.keyboard.type('dd');
+  await expect.poll(() => editorText(page)).toBe('ello world');
+  await page.keyboard.type('u');
+  await expect.poll(() => editorText(page)).toBe('ello world\nello world');
+  // Enter in normal mode is a motion and does not continue a list or add a line.
+  await page.keyboard.press('Enter');
+  await expect.poll(() => editorText(page)).toBe('ello world\nello world');
+
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('switch', { name: 'Vim mode' }).uncheck();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await page.getByTestId('editor-field').click();
+  await page.keyboard.type('i');
+  await expect.poll(() => editorText(page)).toContain('i');
+});

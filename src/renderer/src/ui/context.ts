@@ -15,6 +15,8 @@ export interface AppServices {
   /** The "Chord sequences" setting: creating chord sequences is offered only when it is on. */
   chordSequences: boolean;
   setChordSequences(enabled: boolean): void;
+  vimMode: boolean;
+  setVimMode(enabled: boolean): void;
   /** The "Sync when reconnected" setting (off by default, stored on this device only). */
   syncOnReconnect: boolean;
   setSyncOnReconnect(enabled: boolean): Promise<void>;

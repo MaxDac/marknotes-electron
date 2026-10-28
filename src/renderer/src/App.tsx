@@ -3,6 +3,7 @@ import type { LockStatus } from '../../preload/api';
 import { NoteStore } from '../../shared/noteStore';
 import { api, unwrap } from './data/api';
 import { loadChordSequencesEnabled, saveChordSequencesEnabled } from './data/chordSequences';
+import { loadVimMode, saveVimMode } from './data/vimMode';
 import { IdbNodeBackend, openDatabase, Settings } from './data/db';
 import { RECONNECT_SETTING, ReconnectSync } from './data/reconnectSync';
 import { loadOnboardingHandled } from './data/onboarding';
@@ -33,6 +34,7 @@ interface Loaded {
   mode: ThemeMode;
   color: ThemeColor;
   chordSequences: boolean;
+  vimMode: boolean;
   idleMinutes: number;
   syncOnReconnect: boolean;
   onboardingHandled: boolean;
@@ -54,6 +56,7 @@ async function load(): Promise<Loaded> {
     mode: await settings.get<ThemeMode>('themeMode', 'system'),
     color: normalizeThemeColor(await settings.get<unknown>('themeColor', DEFAULT_THEME_COLOR)),
     chordSequences: await loadChordSequencesEnabled(settings),
+    vimMode: await loadVimMode(settings),
     idleMinutes: await settings.get<number>('lockIdleMinutes', DEFAULT_IDLE_MINUTES),
     syncOnReconnect: (await settings.get<unknown>(RECONNECT_SETTING, false)) === true,
     onboardingHandled: await loadOnboardingHandled(settings),
@@ -75,6 +78,7 @@ export function App() {
   const [systemDark, setSystemDark] = useState(darkQuery.matches);
   const [page, setPage] = useState<Page>('notes');
   const [chordSequences, setChordSequencesState] = useState(false);
+  const [vimMode, setVimModeState] = useState(false);
   const [lock, setLock] = useState<LockStatus | null>(null);
   const [idleMinutes, setIdleMinutesState] = useState(DEFAULT_IDLE_MINUTES);
   const [syncOnReconnect, setSyncOnReconnectState] = useState(false);
@@ -129,6 +133,7 @@ export function App() {
         setLoaded(l);
         setThemeState({ mode: l.mode, color: l.color });
         setChordSequencesState(l.chordSequences);
+        setVimModeState(l.vimMode);
         setIdleMinutesState(l.idleMinutes);
         setSyncOnReconnectState(l.syncOnReconnect);
         setGuideHandled(l.onboardingHandled);
@@ -218,6 +223,7 @@ export function App() {
           void loaded.settings.set('themeColor', color);
         },
         chordSequences,
+        vimMode,
         syncOnReconnect,
         async setSyncOnReconnect(enabled) {
           setSyncOnReconnectState(enabled);
@@ -232,6 +238,10 @@ export function App() {
           setChordSequencesState(enabled);
           void saveChordSequencesEnabled(loaded.settings, enabled);
         },
+        setVimMode(enabled) {
+          setVimModeState(enabled);
+          void saveVimMode(loaded.settings, enabled);
+        },
         lock,
         setLock,
         idleMinutes,
@@ -240,7 +250,7 @@ export function App() {
           void loaded.settings.set('lockIdleMinutes', minutes);
         },
       },
-    [loaded, theme, lock, idleMinutes, chordSequences, syncOnReconnect],
+    [loaded, theme, lock, idleMinutes, chordSequences, vimMode, syncOnReconnect],
   );
 
   if (error) return <div className="empty error">Could not open the notes: {error}</div>;
