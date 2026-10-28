@@ -30,7 +30,13 @@ test('diagnostics are sanitized, offline, reviewed and explicitly consented befo
     }, 0);
   });
   await expect
-    .poll(() => readFileSync(join(userData, 'diagnostics', 'errors.jsonl'), 'utf8'))
+    .poll(() => {
+      try {
+        return readFileSync(join(userData, 'diagnostics', 'errors.jsonl'), 'utf8');
+      } catch {
+        return ''; // Windows can briefly deny a read while the store replaces the file
+      }
+    })
     .toContain('RENDERER_UNCAUGHT');
   const stored = readFileSync(join(userData, 'diagnostics', 'errors.jsonl'), 'utf8');
   expect(stored).not.toMatch(/secret|private|account@|token/);
