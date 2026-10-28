@@ -24,6 +24,8 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
     setTheme,
     chordSequences,
     setChordSequences,
+    vimMode,
+    setVimMode,
     syncOnReconnect,
     setSyncOnReconnect,
   } = useApp();
@@ -198,6 +200,23 @@ export function SettingsPage(props: { navigate(page: Page): void }) {
           <p className="small">
             When this is off, &quot;New chord sequence&quot; is hidden. Existing chord sequences are kept and
             synced either way. This setting is stored on this device only.
+          </p>
+
+          <h2>Editor</h2>
+          <label className="row">
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label="Vim mode"
+              data-testid="vim-mode-setting"
+              checked={vimMode}
+              onChange={(e) => setVimMode(e.target.checked)}
+            />
+            Vim mode
+          </label>
+          <p className="small">
+            Write notes with Vim keybindings: modes, motions, operators and the : command line. This setting
+            is stored on this device only.
           </p>
 
           <h2>Images</h2>

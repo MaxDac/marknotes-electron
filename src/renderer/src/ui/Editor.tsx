@@ -3,8 +3,9 @@ import { Icon, type IconName } from './icons';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
-import { EditorSelection, EditorState, Prec } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState, Prec } from '@codemirror/state';
 import { EditorView, keymap, placeholder, type ViewUpdate } from '@codemirror/view';
+import { getCM, vim } from '@replit/codemirror-vim';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { IMAGE_TYPES, imageMarkdown } from '../../../shared/attachments';
 import { joinFrontMatter, splitFrontMatter } from '../../../shared/frontMatter';
@@ -100,6 +101,23 @@ const editorTheme = EditorView.theme({
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
     backgroundColor: 'color-mix(in srgb, var(--primary) 30%, transparent) !important',
   },
+  '.cm-fat-cursor': { background: 'color-mix(in srgb, var(--primary) 60%, transparent) !important' },
+  '&:not(.cm-focused) .cm-fat-cursor': {
+    outline: '1px solid var(--primary)',
+    background: 'transparent !important',
+  },
+  '.cm-vim-panel': {
+    padding: '2px 32px',
+    fontFamily: 'monospace',
+    backgroundColor: 'var(--bg)',
+    color: 'var(--text)',
+  },
+  '.cm-vim-panel input': {
+    backgroundColor: 'transparent',
+    color: 'var(--text)',
+    border: 'none',
+    outline: 'none',
+  },
   '.cm-gutters': { display: 'none' },
   '.cm-content': { padding: '24px 0' },
   '.cm-line': { padding: '0 32px' },
@@ -144,7 +162,10 @@ export function Editor(props: {
   /** A banner shown above the editor. */
   notice?: ReactNode;
 }) {
-  const { notes, sync } = useApp();
+  const { notes, sync, vimMode } = useApp();
+  const vimCompartment = useRef(new Compartment());
+  const vimModeRef = useRef(vimMode);
+  vimModeRef.current = vimMode;
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -313,6 +334,8 @@ export function Editor(props: {
         {
           key: 'Enter',
           run: (v) => {
+            // In Vim normal and visual mode Enter is a motion, not a line break.
+            if (vimModeRef.current && !getCM(v)?.state.vim?.insertMode) return false;
             const next = E.continueListOnEnter(current(v));
             if (!next) return false;
             apply(v, next);
@@ -351,6 +374,7 @@ export function Editor(props: {
           state: EditorState.create({
             doc: split.body,
             extensions: [
+              vimCompartment.current.of(vimModeRef.current ? vim() : []),
               keys,
               enter,
               images,
@@ -408,6 +432,11 @@ export function Editor(props: {
       view.current = null;
     };
   }, [notes, sync, props.path, updateMention, closeMention]);
+
+  // Toggling Vim mode applies to the open note without rebuilding the view.
+  useEffect(() => {
+    view.current?.dispatch({ effects: vimCompartment.current.reconfigure(vimMode ? vim() : []) });
+  }, [vimMode]);
 
   const openLinkedNote = useCallback(
     (id: string) => {
